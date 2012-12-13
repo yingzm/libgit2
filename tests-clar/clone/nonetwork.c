@@ -49,6 +49,14 @@ void test_clone_nonetwork__local(void)
 	cl_git_pass(git_clone(&g_repo, g_origin, "./local", NULL, NULL, NULL));
 }
 
+void test_clone_nonetwork__local_absolute_path(void)
+{
+	const char *src = cl_fixture("testrepo.git");
+	cl_set_cleanup(&cleanup_repository, "./local");
+
+	cl_git_pass(git_clone(&g_repo, src, "./local", NULL, NULL, NULL));
+}
+
 void test_clone_nonetwork__local_bare(void)
 {
 	cl_set_cleanup(&cleanup_repository, "./local.git");

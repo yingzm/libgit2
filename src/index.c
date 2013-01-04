@@ -277,6 +277,9 @@ int git_index_open(git_index **index_out, const char *index_path)
 
 	if (git_vector_init(&index->entries, 32, index_cmp) < 0)
 		return -1;
+    
+    if (git_vector_init(&index->reuc, 16, reuc_cmp) < 0)
+        return -1;
 
 	index->entries_cmp_path = index_cmp_path;
 	index->entries_search = index_srch;

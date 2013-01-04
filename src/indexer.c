@@ -936,8 +936,8 @@ int git_indexer_write(git_indexer *idx)
 	error = git_filebuf_commit_at(&idx->file, filename.ptr, GIT_PACK_FILE_MODE);
 
 cleanup:
-	git_mwindow_free_all(&idx->pack->mwf);
 	git_mwindow_file_deregister(&idx->pack->mwf);
+	git_mwindow_free_all(&idx->pack->mwf);
 	if (error < 0)
 		git_filebuf_cleanup(&idx->file);
 	git_buf_free(&filename);

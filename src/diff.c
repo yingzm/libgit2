@@ -673,7 +673,13 @@ int git_diff__from_iterators(
 						goto fail;
 
 					continue;
-				}
+				} else {
+                    /* Folder should not be a part of delta */
+                    if (git_iterator_advance_into_directory(new_iter, &nitem) < 0)
+                        goto fail;
+
+                    continue;
+                }
 			}
 
 			/* In core git, the next two "else if" clauses are effectively

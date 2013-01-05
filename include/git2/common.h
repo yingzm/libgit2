@@ -10,6 +10,8 @@
 #include <time.h>
 #include <stdlib.h>
 
+#define GIT_THREADS
+
 #ifdef _MSC_VER
 #	include "inttypes.h"
 #else

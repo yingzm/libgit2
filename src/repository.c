@@ -350,8 +350,10 @@ static int find_repo(
 	git_buf_free(&path);
 
 	if (!git_buf_len(repo_path) && !error) {
+        char *basename = git_path_basename(start_path);
 		giterr_set(GITERR_REPOSITORY,
-			"Could not find repository from '%s'", start_path);
+			"Could not find repository from '%s'", basename);
+        free(basename);
 		error = GIT_ENOTFOUND;
 	}
 

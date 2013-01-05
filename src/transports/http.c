@@ -131,7 +131,7 @@ static int gen_request(
 		git_buf_printf(buf, "Accept: application/x-git-%s-result\r\n", s->service);
 		git_buf_printf(buf, "Content-Type: application/x-git-%s-request\r\n", s->service);
 
-		if (s->chunked)
+		if (content_length==0)
 			git_buf_puts(buf, "Transfer-Encoding: chunked\r\n");
 		else
 			git_buf_printf(buf, "Content-Length: %"PRIuZ "\r\n", content_length);
@@ -704,8 +704,8 @@ static int http_receivepack(
 	s = (http_stream *)*stream;
 
 	/* Use Transfer-Encoding: chunked for this request */
-	s->chunked = 1;
-	s->parent.write = http_stream_write_chunked;
+//	s->chunked = 1;
+//	s->parent.write = http_stream_write_chunked;
 
 	s->service = receive_pack_service;
 	s->service_url = receive_pack_service_url;

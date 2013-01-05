@@ -676,11 +676,18 @@ int git_smart__push(git_transport *transport, git_push *push)
 }
 #endif
 
+    if (gen_pktline(&pktline, push) < 0 ||
+        git_packbuilder_write_buf(&pktline, push->pb) < 0 ||
+        git_smart__get_push_stream(t, &s) < 0 ||
+        s->write(s, git_buf_cstr(&pktline), git_buf_len(&pktline)) < 0)
+        goto on_error;
+/*
 	if (git_smart__get_push_stream(t, &s) < 0 ||
 		gen_pktline(&pktline, push) < 0 ||
 		s->write(s, git_buf_cstr(&pktline), git_buf_len(&pktline)) < 0 ||
 		git_packbuilder_foreach(push->pb, &stream_thunk, s) < 0)
 		goto on_error;
+*/
 
 	/* If we sent nothing or the server doesn't support report-status, then
 	 * we consider the pack to have been unpacked successfully */

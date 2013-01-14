@@ -1371,7 +1371,7 @@ int git_merge(
 		goto on_error;
 	
 	if (their_heads_len == 1 &&
-		(merge_check_uptodate(result, our_head, their_heads[0]) ||
+		(merge_check_uptodate(result, ancestor_head, their_heads[0]) ||
 		merge_check_fastforward(result, ancestor_head, our_head, their_heads[0], opts.merge_flags))) {
 		*out = result;
 		goto done;

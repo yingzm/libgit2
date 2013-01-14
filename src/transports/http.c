@@ -97,10 +97,18 @@ static int apply_basic_credential(git_buf *buf, git_cred *cred)
 
 	git_buf_printf(&raw, "%s:%s", c->username, c->password);
 
-	if (git_buf_oom(&raw) ||
-		git_buf_puts(buf, "Authorization: Basic ") < 0 ||
-		git_buf_put_base64(buf, git_buf_cstr(&raw), raw.size) < 0 ||
-		git_buf_puts(buf, "\r\n") < 0)
+	if (git_buf_oom(&raw) || git_buf_puts(buf, "Authorization: Basic ") < 0)
+        goto on_error;
+    
+    if (cred->credtype==GIT_CREDTYPE_USERPASS_PLAINTEXT) {
+        if (git_buf_put_base64(buf, git_buf_cstr(&raw), raw.size) < 0)
+            goto on_error;
+    } else if (cred->credtype==GIT_CREDTYPE_USERPASS_BASE64) {
+        if (git_buf_put(buf, c->password, strlen(c->password))<0)
+            goto on_error;
+    }
+    
+    if (git_buf_puts(buf, "\r\n") < 0)
 		goto on_error;
 
 	error = 0;
@@ -139,7 +147,8 @@ static int gen_request(
 		git_buf_puts(buf, "Accept: */*\r\n");
 
 	/* Apply credentials to the request */
-	if (t->cred && t->cred->credtype == GIT_CREDTYPE_USERPASS_PLAINTEXT &&
+	if (t->cred &&
+        (t->cred->credtype == GIT_CREDTYPE_USERPASS_PLAINTEXT || t->cred->credtype==GIT_CREDTYPE_USERPASS_BASE64) &&
 		t->auth_mechanism == GIT_HTTP_AUTH_BASIC &&
 		apply_basic_credential(buf, t->cred) < 0)
 		return -1;
@@ -269,9 +278,14 @@ static int on_headers_complete(http_parser *parser)
 
 	/* Check for a 200 HTTP status code. */
 	if (parser->status_code != 200) {
-		giterr_set(GITERR_NET,
-			"Unexpected HTTP status code: %d",
-			parser->status_code);
+        if (parser->status_code==401)
+            giterr_set(GITERR_NET, "Authentication failed");
+        else if (parser->status_code==404)
+            giterr_set(GITERR_NET, "No repository found");
+        else
+            giterr_set(GITERR_NET,
+                "Unexpected HTTP status code: %d",
+                parser->status_code);
 		return t->parse_error = PARSE_ERROR_GENERIC;
 	}
 

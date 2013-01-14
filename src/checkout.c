@@ -133,9 +133,11 @@ static int blob_content_to_link(
 	if ((error = git_blob__getbuf(&linktarget, blob)) < 0)
 		return error;
 
-	if (can_symlink)
-		error = p_symlink(git_buf_cstr(&linktarget), path);
-	else
+	if (can_symlink) {
+        if ((error = git_futils_mkpath2file(path, 0755))<0 ||
+            (error = p_symlink(git_buf_cstr(&linktarget), path))<0)
+            printf("errno=%d", errno);
+	} else
 		error = git_futils_fake_symlink(git_buf_cstr(&linktarget), path);
 
 	git_buf_free(&linktarget);

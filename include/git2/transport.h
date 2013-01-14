@@ -27,6 +27,7 @@ GIT_BEGIN_DECL
 typedef enum {
 	/* git_cred_userpass_plaintext */
 	GIT_CREDTYPE_USERPASS_PLAINTEXT = 1,
+    GIT_CREDTYPE_USERPASS_BASE64 = 2,
 } git_credtype_t;
 
 /* The base structure for all credential types */
@@ -51,6 +52,17 @@ typedef struct git_cred_userpass_plaintext {
  * @param password The password of the credential.
  */
 GIT_EXTERN(int) git_cred_userpass_plaintext_new(
+	git_cred **out,
+	const char *username,
+	const char *password);
+
+typedef struct git_cred_userpass_base64 {
+    git_cred parent;
+    char *username;
+    char *password;
+} git_cred_userpass_base64;
+
+GIT_EXTERN(int) git_cred_userpass_base64_new(
 	git_cred **out,
 	const char *username,
 	const char *password);

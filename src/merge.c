@@ -1510,7 +1510,7 @@ int git_merge_result_delta_foreach(git_merge_result *merge_result,
 	
 	assert(merge_result && delta_cb);
 	
-	git_vector_foreach(&merge_result->conflicts, i, delta) {
+	git_vector_foreach(&merge_result->diff_tree->deltas, i, delta) {
 		if (delta_cb(delta, payload) != 0) {
 			error = GIT_EUSER;
 			break;

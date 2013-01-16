@@ -629,8 +629,10 @@ int git_odb_read(git_odb_object **out, git_odb *db, const git_oid *id)
 	 * will never have called giterr_set().
 	 */
 
-	if (error && error != GIT_PASSTHROUGH)
+	if (error && error != GIT_PASSTHROUGH) {
+        git_odb__error_notfound("no matching object", id);
 		return error;
+    }
 
 	*out = git_cache_try_store(&db->cache, new_odb_object(id, &raw));
 	return 0;

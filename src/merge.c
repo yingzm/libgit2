@@ -1260,8 +1260,10 @@ static int merge_ancestor_head(
 	for (i = 0; i < their_heads_len; i++)
 		git_oid_cpy(&oids[i + 1], &their_heads[i]->oid);
 	
-	if ((error = git_merge_base_many(&ancestor_oid, repo, oids, their_heads_len + 1)) < 0)
+	if ((error = git_merge_base_many(&ancestor_oid, repo, oids, their_heads_len + 1)) < 0) {
+        giterr_set(GITERR_MERGE, "Merge without ancestor is not supported, sorry.");
 		goto on_error;
+    }
 
 	error = git_merge_head_from_oid(ancestor_head, repo, &ancestor_oid);
 

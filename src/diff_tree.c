@@ -338,9 +338,10 @@ int git_diff_tree(git_diff_tree_list **out,
 	struct diff_tree_threeway_data threeway_data;
 	git_diff_tree_list *diff_tree;
 	git_tree const *trees[3];
+    int num_trees = 3;
 	int error = 0;
 	
-	assert(out && repo && ancestor_tree && our_tree && their_tree);
+	assert(out && repo && our_tree && their_tree);
 	
 	*out = NULL;
 
@@ -350,11 +351,17 @@ int git_diff_tree(git_diff_tree_list **out,
 	memset(&threeway_data, 0x0, sizeof(struct diff_tree_threeway_data));
 	threeway_data.diff_tree = diff_tree;
 	
-	trees[INDEX_ANCESTOR] = ancestor_tree;
-	trees[INDEX_OURS] = our_tree;
-	trees[INDEX_THEIRS] = their_tree;
+    if (ancestor_tree!=NULL) {
+        trees[INDEX_ANCESTOR] = ancestor_tree;
+        trees[INDEX_OURS] = our_tree;
+        trees[INDEX_THEIRS] = their_tree;
+    } else {
+        num_trees = 2;
+        trees[0] = our_tree;
+        trees[1] = their_tree;
+    }
 	
-	if ((error = git_diff_tree_many(repo, trees, 3, flags, diff_tree__create_delta, &threeway_data)) < 0)
+	if ((error = git_diff_tree_many(repo, trees, num_trees, flags, diff_tree__create_delta, &threeway_data)) < 0)
 		git_diff_tree_list_free(diff_tree);
 	
 	if (error >= 0)

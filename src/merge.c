@@ -1277,7 +1277,7 @@ GIT_INLINE(bool) merge_check_uptodate(
 	const git_merge_head *our_head,
 	const git_merge_head *their_head)
 {
-	if (git_oid_cmp(&our_head->oid, &their_head->oid) == 0) {
+	if (our_head!=NULL && git_oid_cmp(&our_head->oid, &their_head->oid) == 0) {
 		result->is_uptodate = 1;
 		return true;
 	}
@@ -1285,6 +1285,10 @@ GIT_INLINE(bool) merge_check_uptodate(
 	return false;
 }
 
+/**
+ * our_head must be not NULL. Because if ancestor_head==NULL && our_head==NULL,
+ * it should return true.
+ */
 GIT_INLINE(bool) merge_check_fastforward(
 	git_merge_result *result,
 	const git_merge_head *ancestor_head,
@@ -1292,8 +1296,11 @@ GIT_INLINE(bool) merge_check_fastforward(
 	const git_merge_head *their_head,
 	unsigned int flags)
 {
+    assert(our_head!=NULL);
+    
 	if ((flags & GIT_MERGE_NO_FASTFORWARD) == 0 &&
-		git_oid_cmp(&ancestor_head->oid, &our_head->oid) == 0) {
+		ancestor_head!=NULL &&
+        git_oid_cmp(&ancestor_head->oid, &our_head->oid) == 0) {
 		result->is_fastforward = 1;
 		git_oid_cpy(&result->fastforward_oid, &their_head->oid);
 		
@@ -1367,10 +1374,39 @@ int git_merge(
 	if ((error = git_repository__ensure_not_bare(repo, "merge")) < 0)
 		goto on_error;
 	
-	if ((error = git_reference_lookup(&our_ref, repo, GIT_HEAD_FILE)) < 0 ||
-		(error = git_merge_head_from_ref(&our_head, repo, our_ref)) < 0 ||
-		(error = merge_ancestor_head(&ancestor_head, repo, our_head, their_heads, their_heads_len)) < 0)
-		goto on_error;
+	if ((error = git_reference_lookup(&our_ref, repo, GIT_HEAD_FILE)) < 0)
+        goto on_error;
+    if ((error = git_merge_head_from_ref(&our_head, repo, our_ref)) < 0) {
+        // HEAD not found means you have empty branch,
+        // like when you create an empty repository
+        if (error!=GIT_ENOTFOUND)
+            goto on_error;
+        
+        // TODO: should identify as fast-forward and checkout theirs
+        // What the fuck? theirs can be multiple references?
+        if (their_heads_len==1) {
+            if ((opts.merge_flags&GIT_MERGE_NO_FASTFORWARD)==0) {
+                result->is_fastforward = 1;
+                git_oid_cpy(&result->fastforward_oid, &their_heads[0]->oid);
+                *out = result;
+                error = 0;
+                goto done;
+            } else {
+                giterr_set(GITERR_MERGE, "non fastforward merge on empty HEAD is not implemented");
+                error = GIT_ERROR;
+                goto on_error;
+            }
+        }
+    } else {
+		if ((error = merge_ancestor_head(&ancestor_head, repo, our_head, their_heads, their_heads_len)) < 0) {
+            if (error!=GIT_ENOTFOUND)
+                goto on_error;
+            
+            // ancestor_head is NULL and our_head is not NULL. That probly caused by assigning remote url
+            // to a completely different repository, just merge then.
+            // We do nothing here, ancestor_head should be handled with care.
+        }
+    }
 	
 	if (their_heads_len == 1 &&
 		(merge_check_uptodate(result, ancestor_head, their_heads[0]) ||
@@ -1383,7 +1419,7 @@ int git_merge(
 	if ((error = git_merge__setup(repo, our_head, their_heads, their_heads_len, opts.merge_flags)) < 0)
 		goto on_error;
 	
-	if ((error = git_commit_tree(&ancestor_tree, ancestor_head->commit)) < 0 ||
+	if ( (ancestor_head!=NULL && (error = git_commit_tree(&ancestor_tree, ancestor_head->commit)) < 0) ||
 		(error = git_commit_tree(&our_tree, our_head->commit)) < 0)
 		goto on_error;
 	

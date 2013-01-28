@@ -23,6 +23,7 @@
 #include "blob.h"
 #include "diff.h"
 #include "pathspec.h"
+#include "checkout.h"
 
 /* See docs/checkout-internals.md for more information */
 
@@ -679,7 +680,7 @@ static int blob_content_to_file(
 	git_blob *blob,
 	const char *path,
 	mode_t entry_filemode,
-	git_checkout_opts *opts)
+	const git_checkout_opts *opts)
 {
 	int error = -1, nb_filters = 0;
 	mode_t file_mode = opts->file_mode;
@@ -830,6 +831,167 @@ static int checkout_submodule(
 	}
 
 	return error;
+}
+
+static int retrieve_symlink_caps(git_repository *repo, bool *out)
+{
+	git_config *cfg;
+	int can_symlink = 0;
+	int error;
+	
+	if (git_repository_config__weakptr(&cfg, repo) < 0)
+		return -1;
+
+	error = git_config_get_bool(&can_symlink, cfg, "core.symlinks");
+
+	/* If "core.symlinks" is not found anywhere, default to true. */
+	if (error == GIT_ENOTFOUND) {
+		can_symlink = true;
+		error = 0;
+	}
+
+	if (error >= 0)
+		*out = can_symlink;
+	
+	return error;
+}
+
+static int checkout_blob_content(
+	git_repository *repo,
+	const git_oid *oid,
+	const char *full_path,
+	int mode,
+	bool can_symlink,
+	const git_checkout_opts *opts)
+{
+	git_blob *blob;
+	int error = 0;
+    struct stat st;
+
+	if ((error = git_blob_lookup(&blob, repo, oid)) < 0)
+		return error;
+	
+	if (S_ISLNK(mode))
+		error = blob_content_to_link(&st, blob, full_path, can_symlink);
+	else
+		error = blob_content_to_file(&st, blob, full_path, mode, opts);
+	
+	git_blob_free(blob);
+	
+	return error;
+}
+
+static void normalize_options(
+	git_checkout_opts *normalized, git_checkout_opts *proposed)
+{
+	assert(normalized);
+
+	if (!proposed)
+		GIT_INIT_STRUCTURE(normalized, GIT_CHECKOUT_OPTS_VERSION);
+	else
+		memmove(normalized, proposed, sizeof(git_checkout_opts));
+
+    // FIXME: Not sure at all
+    normalized->checkout_strategy = GIT_CHECKOUT_SAFE_CREATE;
+	/* implied checkout strategies */
+    /*
+	if ((normalized->checkout_strategy & GIT_CHECKOUT_UPDATE_MODIFIED) != 0 ||
+		(normalized->checkout_strategy & GIT_CHECKOUT_UPDATE_UNTRACKED) != 0)
+		normalized->checkout_strategy |= GIT_CHECKOUT_UPDATE_UNMODIFIED;
+
+	if ((normalized->checkout_strategy & GIT_CHECKOUT_UPDATE_UNTRACKED) != 0)
+		normalized->checkout_strategy |= GIT_CHECKOUT_UPDATE_MISSING;
+    */
+
+	/* opts->disable_filters is false by default */
+
+	if (!normalized->dir_mode)
+		normalized->dir_mode = GIT_DIR_MODE;
+
+	if (!normalized->file_open_flags)
+		normalized->file_open_flags = O_CREAT | O_TRUNC | O_WRONLY;
+}
+
+int git_checkout_blob(
+	git_repository *repo,
+	const git_oid *oid,
+	const char *path,
+	int mode,
+	git_checkout_opts *opts)
+{
+	git_buf full_path = GIT_BUF_INIT;
+	git_checkout_opts checkout_opts;
+	bool can_symlink = 0;
+	int error = 0;
+	
+	if ((error = retrieve_symlink_caps(repo, &can_symlink)) < 0 ||
+		git_buf_joinpath(&full_path, repo->workdir, path) < 0)
+		goto done;
+
+	normalize_options(&checkout_opts, opts);
+	
+	error = checkout_blob_content(repo, oid, git_buf_cstr(&full_path), mode, can_symlink, &checkout_opts);
+	
+done:
+	git_buf_free(&full_path);
+	
+	return error;
+}
+
+static int checkout_confirm_update_blob(
+	checkout_data *data,
+	const git_diff_delta *delta,
+	int action)
+{
+	int error;
+	unsigned int strat = data->opts.checkout_strategy;
+	struct stat st;
+	bool update_only = ((strat & GIT_CHECKOUT_UPDATE_ONLY) != 0);
+
+	/* for typechange, remove the old item first */
+	if (delta->status == GIT_DELTA_TYPECHANGE) {
+		if (update_only)
+			action = CHECKOUT_ACTION__NONE;
+		else
+			action |= CHECKOUT_ACTION__REMOVE;
+
+		return action;
+	}
+
+	git_buf_truncate(&data->path, data->workdir_len);
+	if (git_buf_puts(&data->path, delta->new_file.path) < 0)
+		return -1;
+
+	if ((error = p_lstat_posixly(git_buf_cstr(&data->path), &st)) < 0) {
+		if (errno == ENOENT) {
+			if (update_only)
+				action = CHECKOUT_ACTION__NONE;
+		} else if (errno == ENOTDIR) {
+			/* File exists where a parent dir needs to go - i.e. untracked
+			 * typechange.  Ignore if UPDATE_ONLY, remove if allowed.
+			 */
+			if (update_only)
+				action = CHECKOUT_ACTION__NONE;
+			else if ((strat & GIT_CHECKOUT_REMOVE_UNTRACKED) != 0)
+				action |= CHECKOUT_ACTION__REMOVE;
+			else
+				action = CHECKOUT_ACTION__CONFLICT;
+		}
+		/* otherwise let error happen when we attempt blob checkout later */
+	}
+	else if (S_ISDIR(st.st_mode)) {
+		/* Directory exists where a blob needs to go - i.e. untracked
+		 * typechange.  Ignore if UPDATE_ONLY, remove if allowed.
+		 */
+		if (update_only)
+			action = CHECKOUT_ACTION__NONE;
+		else if ((strat & GIT_CHECKOUT_REMOVE_UNTRACKED) != 0)
+			action |= CHECKOUT_ACTION__REMOVE;
+		else
+			action = CHECKOUT_ACTION__CONFLICT;
+	}
+
+	return action;
 }
 
 static void report_progress(

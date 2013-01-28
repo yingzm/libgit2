@@ -483,9 +483,9 @@ int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo,
 			if (recv_pkt((git_pkt **)&pkt, buf) < 0)
 				return -1;
 
-            if (pkt_type==GIT_PKT_SHALLOW && shallow_ptr)
+            if (pkt->type==GIT_PKT_SHALLOW && shallow_ptr)
                 register_shallow(shallow_ptr, &((git_pkt_shallow *)pkt)->oid);
-            else if (pkt_type==GIT_PKT_UNSHALLOW && shallow_ptr)
+            else if (pkt->type==GIT_PKT_UNSHALLOW && shallow_ptr)
                 unregister_shallow(shallow_ptr, &((git_pkt_unshallow *)pkt)->oid);
 			else if (pkt->type == GIT_PKT_NAK ||
 			    (pkt->type == GIT_PKT_ACK && ((git_pkt_ack *)pkt)->status != GIT_ACK_CONTINUE)) {

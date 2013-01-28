@@ -32,6 +32,7 @@ struct git_remote {
 	git_remote_autotag_option_t download_tags;
 	unsigned int check_cert;
 	unsigned int update_fetchhead;
+    int shallow_depth;
 };
 
 const char* git_remote__urlfordirection(struct git_remote *remote, int direction);

@@ -201,8 +201,12 @@ int git_merge__bases_many(git_commit_list **out, git_revwalk *walk, git_commit_l
 			if ((p->flags & flags) == flags)
 				continue;
 
-			if ((error = git_commit_list_parse(walk, p)) < 0)
-				return error;
+			if ((error = git_commit_list_parse(walk, p)) < 0) {
+                if (error==GIT_ENOTFOUND)
+                    continue;
+                else
+                    return error;
+            }
 
 			p->flags |= flags;
 			if (git_pqueue_insert(&list, p) < 0)

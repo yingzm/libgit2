@@ -219,6 +219,7 @@ static int local_ls(git_transport *transport, git_headlist_cb list_cb, void *pay
 static int local_negotiate_fetch(
 	git_transport *transport,
 	git_repository *repo,
+    int shallow_depth,
 	const git_remote_head * const *refs,
 	size_t count)
 {

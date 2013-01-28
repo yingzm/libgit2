@@ -117,6 +117,12 @@ int git_smart__detect_caps(git_pkt_ref *pkt, transport_smart_caps *caps)
 			ptr += strlen(GIT_CAP_DELETE_REFS);
 			continue;
 		}
+        
+        if (!git__prefixcmp(ptr, GIT_CAP_SHALLOW)) {
+            caps->common = caps->shallow = 1;
+            ptr += strlen(GIT_CAP_SHALLOW);
+            continue;
+        }
 
 		/* We don't know this capability, so skip it */
 		ptr = strchr(ptr, ' ');
@@ -157,7 +163,35 @@ static int recv_pkt(git_pkt **out, gitno_buffer *buf)
 	return pkt_type;
 }
 
-static int store_common(transport_smart *t)
+static void register_shallow(git_vector *v, const git_oid *oid)
+{
+    int index;
+    char *oidhex = git__malloc(GIT_OID_HEXSZ+1);
+    git_oid_tostr(oidhex, GIT_OID_HEXSZ, oid);
+    
+    index = git_vector_search(v, oidhex);
+    if (index>=0) {
+        git__free(oidhex);
+        return;
+    }
+    
+    git_vector_insert(v, oidhex);
+}
+
+static void unregister_shallow(git_vector *v, const git_oid *oid)
+{
+    int index;
+    char oidhex[GIT_OID_HEXSZ+1] = {0};
+    git_oid_tostr(oidhex, GIT_OID_HEXSZ, oid);
+    
+    index = git_vector_search(v, oidhex);
+    if (index<0)
+        return;
+    
+    git_vector_remove(v, index);
+}
+
+static int store_common(transport_smart *t, git_vector *shallow_vector)
 {
 	git_pkt *pkt = NULL;
 	gitno_buffer *buf = &t->buffer;
@@ -166,7 +200,15 @@ static int store_common(transport_smart *t)
 		if (recv_pkt(&pkt, buf) < 0)
 			return -1;
 
-		if (pkt->type == GIT_PKT_ACK) {
+        if (pkt->type == GIT_PKT_SHALLOW && shallow_vector) {
+            git_pkt_shallow *shallow_pkt = (git_pkt_shallow *)pkt;
+            register_shallow(shallow_vector, &shallow_pkt->oid);
+            git__free(pkt);
+        } else if (pkt->type==GIT_PKT_UNSHALLOW && shallow_vector) {
+            git_pkt_unshallow *unshallow_pkt = (git_pkt_unshallow *)pkt;
+            unregister_shallow(shallow_vector, &unshallow_pkt->oid);
+            git__free(pkt);
+		} if (pkt->type == GIT_PKT_ACK) {
 			if (git_vector_insert(&t->common, pkt) < 0)
 				return -1;
 		} else {
@@ -220,7 +262,75 @@ on_error:
 	return -1;
 }
 
-int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo, const git_remote_head * const *refs, size_t count)
+int git_shallow_load(git_vector *v, git_repository *repo)
+{
+    int rt;
+    git_buf path = GIT_BUF_INIT, file = GIT_BUF_INIT;
+    char *buffer, *line;
+    size_t line_num = 0;
+    
+	if (git_buf_joinpath(&path, repo->path_repository, GIT_SHALLOW_FILE) < 0)
+		return -1;
+
+	if ((rt = git_futils_readbuffer(&file, git_buf_cstr(&path))) < 0)
+		goto done;
+
+	buffer = file.ptr;
+
+	while ((line = git__strsep(&buffer, "\n")) != NULL) {
+        char *oid;
+        
+		++line_num;
+
+        oid = git__malloc(GIT_OID_HEXSZ+1);
+        if (oid==NULL) {
+            giterr_set_oom();
+            rt = -1;
+            break;
+        }
+        memcpy(oid, line, GIT_OID_HEXSZ);
+        oid[GIT_OID_HEXSZ] = '\0';
+        
+        git_vector_insert(v, oid);
+	}
+
+done:
+	git_buf_free(&file);
+	git_buf_free(&path);
+    
+    return rt;
+}
+
+int git_shallow_write(git_vector *v, git_repository *repo)
+{
+	git_filebuf file = GIT_FILEBUF_INIT;
+	git_buf path = GIT_BUF_INIT;
+	unsigned int i;
+    char *item;
+
+	assert(repo && v);
+
+	if (git_buf_joinpath(&path, repo->path_repository, GIT_SHALLOW_FILE) < 0)
+		return -1;
+
+	if (git_filebuf_open(&file, path.ptr, GIT_FILEBUF_FORCE) < 0) {
+		git_buf_free(&path);
+		return -1;
+	}
+
+	git_buf_free(&path);
+
+	git_vector_sort(v);
+
+	git_vector_foreach(v, i, item) {
+        git_filebuf_printf(&file, "%s\n", item);
+    }
+
+	return git_filebuf_commit(&file, GIT_REFS_FILE_MODE);
+}
+
+int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo,
+    int shallow_depth, const git_remote_head * const *refs, size_t count)
 {
 	transport_smart *t = (transport_smart *)transport;
 	gitno_buffer *buf = &t->buffer;
@@ -229,10 +339,24 @@ int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo, c
 	int error = -1, pkt_type;
 	unsigned int i;
 	git_oid oid;
+    git_vector shallow_vector;
+    git_vector *shallow_ptr=NULL;
+    
+    if (t->caps.shallow) {
+        git_vector_init(&shallow_vector, 10, git__strcmp_cb);
+        git_shallow_load(&shallow_vector, repo);
+        shallow_ptr = &shallow_vector;
+    } else {
+        shallow_depth = 0;
+        shallow_ptr = NULL;
+    }
 
 	/* No own logic, do our thing */
-	if (git_pkt_buffer_wants(refs, count, &t->caps, &data) < 0)
+	if (git_pkt_buffer_wants(refs, count, &t->caps, &data, shallow_depth, shallow_ptr) < 0) {
+        if (shallow_ptr)
+            git_vector_free(shallow_ptr);
 		return -1;
+    }
 
 	if (fetch_setup_walk(&walk, repo) < 0)
 		goto on_error;
@@ -261,16 +385,28 @@ int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo, c
 
 			git_buf_clear(&data);
 			if (t->caps.multi_ack) {
-				if (store_common(t) < 0)
+				if (store_common(t, shallow_ptr) < 0)
 					goto on_error;
 			} else {
-				pkt_type = recv_pkt(NULL, buf);
+                git_pkt *pkt = NULL;
+				pkt_type = recv_pkt(&pkt, buf);
 
-				if (pkt_type == GIT_PKT_ACK) {
+                if (pkt_type==GIT_PKT_SHALLOW && shallow_ptr) {
+                    git_pkt_shallow *shallow_pkt = (git_pkt_shallow *)pkt;
+                    register_shallow(&shallow_vector, &shallow_pkt->oid);
+                    git__free(pkt);
+                } else if (pkt_type==GIT_PKT_UNSHALLOW && shallow_ptr) {
+                    git_pkt_unshallow *unshallow_pkt = (git_pkt_unshallow *)pkt;
+                    unregister_shallow(&shallow_vector, &unshallow_pkt->oid);
+                    git__free(pkt);
+				} else if (pkt_type == GIT_PKT_ACK) {
+                    git__free(pkt);
 					break;
 				} else if (pkt_type == GIT_PKT_NAK) {
+                    git__free(pkt);
 					continue;
 				} else {
+                    git__free(pkt);
 					giterr_set(GITERR_NET, "Unexpected pkt type");
 					goto on_error;
 				}
@@ -284,7 +420,7 @@ int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo, c
 			git_pkt_ack *pkt;
 			unsigned int i;
 
-			if (git_pkt_buffer_wants(refs, count, &t->caps, &data) < 0)
+			if (git_pkt_buffer_wants(refs, count, &t->caps, &data, shallow_depth, shallow_ptr) < 0)
 				goto on_error;
 
 			git_vector_foreach(&t->common, i, pkt) {
@@ -304,7 +440,7 @@ int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo, c
 		git_pkt_ack *pkt;
 		unsigned int i;
 
-		if (git_pkt_buffer_wants(refs, count, &t->caps, &data) < 0)
+		if (git_pkt_buffer_wants(refs, count, &t->caps, &data, shallow_depth, shallow_ptr) < 0)
 			goto on_error;
 
 		git_vector_foreach(&t->common, i, pkt) {
@@ -329,19 +465,30 @@ int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo, c
 
 	/* Now let's eat up whatever the server gives us */
 	if (!t->caps.multi_ack) {
-		pkt_type = recv_pkt(NULL, buf);
-		if (pkt_type != GIT_PKT_ACK && pkt_type != GIT_PKT_NAK) {
+        git_pkt *pkt;
+		pkt_type = recv_pkt(&pkt, buf);
+        if (pkt_type==GIT_PKT_SHALLOW && shallow_ptr)
+            register_shallow(shallow_ptr, &((git_pkt_shallow *)pkt)->oid);
+        else if (pkt_type==GIT_PKT_UNSHALLOW && shallow_ptr)
+            unregister_shallow(shallow_ptr, &((git_pkt_unshallow *)pkt)->oid);
+		else if (pkt_type != GIT_PKT_ACK && pkt_type != GIT_PKT_NAK) {
+            git__free(pkt);
 			giterr_set(GITERR_NET, "Unexpected pkt type");
 			return -1;
 		}
+        git__free(pkt);
 	} else {
-		git_pkt_ack *pkt;
+		git_pkt *pkt;
 		do {
 			if (recv_pkt((git_pkt **)&pkt, buf) < 0)
 				return -1;
 
-			if (pkt->type == GIT_PKT_NAK ||
-			    (pkt->type == GIT_PKT_ACK && pkt->status != GIT_ACK_CONTINUE)) {
+            if (pkt_type==GIT_PKT_SHALLOW && shallow_ptr)
+                register_shallow(shallow_ptr, &((git_pkt_shallow *)pkt)->oid);
+            else if (pkt_type==GIT_PKT_UNSHALLOW && shallow_ptr)
+                unregister_shallow(shallow_ptr, &((git_pkt_unshallow *)pkt)->oid);
+			else if (pkt->type == GIT_PKT_NAK ||
+			    (pkt->type == GIT_PKT_ACK && ((git_pkt_ack *)pkt)->status != GIT_ACK_CONTINUE)) {
 				git__free(pkt);
 				break;
 			}
@@ -349,10 +496,18 @@ int git_smart__negotiate_fetch(git_transport *transport, git_repository *repo, c
 			git__free(pkt);
 		} while (1);
 	}
+    
+    // save shallow objects
+    if (shallow_ptr) {
+        git_shallow_write(shallow_ptr, repo);
+        git_vector_free(shallow_ptr);
+    }
 
 	return 0;
 
 on_error:
+    if (shallow_ptr)
+        git_vector_free(shallow_ptr);
 	git_revwalk_free(walk);
 	git_buf_free(&data);
 	return error;

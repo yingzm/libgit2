@@ -460,6 +460,10 @@ GIT_EXTERN(int) git_remote_update_fetchhead(git_remote *remote);
  */
 GIT_EXTERN(void) git_remote_set_update_fetchhead(git_remote *remote, int value);
 
+GIT_EXTERN(int) git_remote_shallow_depth(git_remote *remote);
+
+GIT_EXTERN(void) git_remote_set_shallow_depth(git_remote *remote, int value);
+
 /** @} */
 GIT_END_DECL
 #endif

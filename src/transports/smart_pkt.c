@@ -69,6 +69,50 @@ static int ack_pkt(git_pkt **out, const char *line, size_t len)
 	return 0;
 }
 
+static int shallow_pkt(git_pkt **out, const char *line, size_t len)
+{
+	git_pkt_shallow *pkt;
+
+	pkt = git__calloc(1, sizeof(git_pkt_shallow));
+	GITERR_CHECK_ALLOC(pkt);
+
+	pkt->type = GIT_PKT_SHALLOW;
+	line += 7;
+	len -= 7;
+
+	if (len >= GIT_OID_HEXSZ) {
+		git_oid_fromstr(&pkt->oid, line + 1);
+		line += GIT_OID_HEXSZ;
+		len -= GIT_OID_HEXSZ;
+	}
+
+	*out = (git_pkt *) pkt;
+
+	return 0;
+}
+
+static int unshallow_pkt(git_pkt **out, const char *line, size_t len)
+{
+	git_pkt_unshallow *pkt;
+
+	pkt = git__calloc(1, sizeof(git_pkt_unshallow));
+	GITERR_CHECK_ALLOC(pkt);
+
+	pkt->type = GIT_PKT_UNSHALLOW;
+	line += 9;
+	len -= 9;
+
+	if (len >= GIT_OID_HEXSZ) {
+		git_oid_fromstr(&pkt->oid, line + 1);
+		line += GIT_OID_HEXSZ;
+		len -= GIT_OID_HEXSZ;
+	}
+
+	*out = (git_pkt *) pkt;
+
+	return 0;
+}
+
 static int nak_pkt(git_pkt **out)
 {
 	git_pkt *pkt;
@@ -394,7 +438,11 @@ int git_pkt_parse_line(
 		ret = ng_pkt(head, line, len);
 	else if (!git__prefixcmp(line, "unpack"))
 		ret = unpack_pkt(head, line, len);
-	else
+	else if (!git__prefixcmp(line, "shallow"))
+        ret = shallow_pkt(head, line, len);
+    else if (!git__prefixcmp(line, "unshallow"))
+        ret = unshallow_pkt(head, line, len);
+    else
 		ret = ref_pkt(head, line, len);
 
 	*out = line + len;
@@ -473,7 +521,9 @@ int git_pkt_buffer_wants(
 	const git_remote_head * const *refs,
 	size_t count,
 	transport_smart_caps *caps,
-	git_buf *buf)
+	git_buf *buf,
+    int shallow_depth,
+    git_vector *shallow_vector)
 {
 	size_t i = 0;
 	const git_remote_head *head;
@@ -505,6 +555,23 @@ int git_pkt_buffer_wants(
 		if (git_buf_oom(buf))
 			return -1;
 	}
+    
+    if (shallow_vector) {
+        const char *item;
+        char line_buf[64] = {0};
+        git_vector_foreach(shallow_vector, i, item) {
+            snprintf(line_buf, 63, "XXXXshallow %s", item);
+            git_buf_printf(buf, "%04xshallow %s", (int)strlen(line_buf), item);
+        }
+    }
+    
+    if (shallow_depth>0) {
+        char line_buf[64] = {0};
+        snprintf(line_buf, 63, "XXXXdeepen %d", shallow_depth);
+        git_buf_printf(buf, "%04xdeepen %d", (int)strlen(line_buf), shallow_depth);
+        if (git_buf_oom(buf))
+            return -1;
+    }
 
 	return git_pkt_buffer_flush(buf);
 }

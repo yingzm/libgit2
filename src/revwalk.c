@@ -250,8 +250,12 @@ static int revwalk_next_timesort(git_commit_list_node **object_out, git_revwalk 
 	git_commit_list_node *next;
 
 	while ((next = git_pqueue_pop(&walk->iterator_time)) != NULL) {
-		if ((error = process_commit_parents(walk, next)) < 0)
-			return error;
+		if ((error = process_commit_parents(walk, next)) < 0) {
+            if (error==GIT_ENOTFOUND)
+                continue;
+            else
+                return error;
+        }
 
 		if (!next->uninteresting) {
 			*object_out = next;
@@ -269,8 +273,12 @@ static int revwalk_next_unsorted(git_commit_list_node **object_out, git_revwalk 
 	git_commit_list_node *next;
 
 	while ((next = git_commit_list_pop(&walk->iterator_rand)) != NULL) {
-		if ((error = process_commit_parents(walk, next)) < 0)
-			return error;
+		if ((error = process_commit_parents(walk, next)) < 0) {
+            if (error==GIT_ENOTFOUND)
+                continue;
+            else
+                return error;
+        }
 
 		if (!next->uninteresting) {
 			*object_out = next;

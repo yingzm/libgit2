@@ -126,6 +126,7 @@ typedef struct git_transport {
 	 * the wants list for the fetch. */
 	int (*negotiate_fetch)(struct git_transport *transport,
 		git_repository *repo,
+        int shallow_depth,
 		const git_remote_head * const *refs,
 		size_t count);
 

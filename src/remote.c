@@ -98,6 +98,7 @@ static int create_internal(git_remote **out, git_repository *repo, const char *n
 	remote->repo = repo;
 	remote->check_cert = 0;
 	remote->update_fetchhead = 1;
+    remote->shallow_depth = 0;
 
 	if (git_vector_init(&remote->refs, 32, NULL) < 0)
 		goto on_error;
@@ -230,6 +231,7 @@ int git_remote_load(git_remote **out, git_repository *repo, const char *name)
 	memset(remote, 0x0, sizeof(git_remote));
 	remote->check_cert = 0;
 	remote->update_fetchhead = 1;
+    remote->shallow_depth = 0;
 	remote->name = git__strdup(name);
 	GITERR_CHECK_ALLOC(remote->name);
 
@@ -1390,4 +1392,14 @@ int git_remote_update_fetchhead(git_remote *remote)
 void git_remote_set_update_fetchhead(git_remote *remote, int value)
 {
 	remote->update_fetchhead = value;
+}
+
+int git_remote_shallow_depth(git_remote *remote)
+{
+    return remote->shallow_depth;
+}
+
+void git_remote_set_shallow_depth(git_remote *remote, int value)
+{
+    remote->shallow_depth = value;
 }

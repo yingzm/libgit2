@@ -318,6 +318,7 @@ static int setup_remotes_and_fetch(
 	/* Construct an origin remote */
 	if (!create_and_configure_origin(&origin, repo, url, options)) {
 		git_remote_set_update_fetchhead(origin, 0);
+        git_remote_set_shallow_depth(origin, options->shallow_depth);
 
 		/* Connect and download everything */
 		if (!git_remote_connect(origin, GIT_DIRECTION_FETCH)) {

@@ -861,7 +861,7 @@ static int diff_patch_line_cb(
 		patch->lines_asize = new_size;
 	}
 
-	last = (patch->lines_size > 0) ?
+	last = (patch->lines_size > hunk->line_start) ?
 		&patch->lines[patch->lines_size - 1] : NULL;
 	line = &patch->lines[patch->lines_size++];
 

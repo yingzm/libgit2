@@ -135,7 +135,10 @@ static int gitno__recv(gitno_buffer *buf)
 	if (ret < 0) {
 		net_set_error("Error receiving socket data");
 		return -1;
-	}
+	} else if (buf->len-buf->offset>0 && ret==0) {
+        net_set_error("Remote disconnect");
+        return -1;
+    }
 
 	buf->offset += ret;
 	return ret;

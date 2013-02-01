@@ -1496,7 +1496,7 @@ int git_merge__cleanup(git_repository *repo)
 	
 	if (git_buf_joinpath(&merge_head_path, repo->path_repository, GIT_MERGE_HEAD_FILE) < 0 ||
 		git_buf_joinpath(&merge_mode_path, repo->path_repository, GIT_MERGE_MODE_FILE) < 0 ||
-		git_buf_joinpath(&merge_mode_path, repo->path_repository, GIT_MERGE_MODE_FILE) < 0)
+		git_buf_joinpath(&merge_msg_path, repo->path_repository, GIT_MERGE_MSG_FILE) < 0)
 		return -1;
 	
 	if (git_path_isfile(merge_head_path.ptr)) {
@@ -1674,3 +1674,10 @@ void git_merge_head_free(git_merge_head *head)
     
     git__free(head);
 }
+
+int git_repository_merge_cleanup(git_repository *repository)
+{
+    return git_merge__cleanup(repository);
+}
+
+

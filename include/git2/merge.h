@@ -161,6 +161,8 @@ GIT_EXTERN(int) git_merge_head_from_ref(git_merge_head **out, git_repository *re
 GIT_EXTERN(int) git_merge_head_from_oid(git_merge_head **out, git_repository *repo, const git_oid *oid);
 GIT_EXTERN(void) git_merge_head_free(git_merge_head *head);
 
+GIT_EXTERN(int) git_repository_merge_cleanup(git_repository *repo);
+
 
 /** @} */
 GIT_END_DECL

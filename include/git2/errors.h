@@ -34,6 +34,9 @@ enum {
 
 	GIT_PASSTHROUGH = -30,
 	GIT_ITEROVER = -31,
+    
+    // EREDIRECT is used to HTTP 301/302/307 Redirect 
+    GIT_EREDIRECT = -301
 };
 
 typedef struct {

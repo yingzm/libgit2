@@ -216,6 +216,8 @@ struct http_parser {
 
   /** PUBLIC **/
   void *data; /* A pointer to get hook to the "connection" or "socket" object */
+  char *location;
+  int location_index;
 };
 
 

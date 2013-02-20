@@ -125,6 +125,9 @@ do {                                                                 \
 #define CHUNKED "chunked"
 #define KEEP_ALIVE "keep-alive"
 #define CLOSE "close"
+#define LOCATION "location"
+
+#define MAX_LOCATION_LENGTH 256
 
 
 static const char *method_strings[] =
@@ -323,11 +326,13 @@ enum header_states
   , h_matching_content_length
   , h_matching_transfer_encoding
   , h_matching_upgrade
+  , h_matching_location
 
   , h_connection
   , h_content_length
   , h_transfer_encoding
   , h_upgrade
+  , h_location
 
   , h_matching_transfer_encoding_chunked
   , h_matching_connection_keep_alive
@@ -1212,6 +1217,10 @@ size_t http_parser_execute (http_parser *parser,
           case 'u':
             parser->header_state = h_matching_upgrade;
             break;
+            
+          case 'l':
+            parser->header_state = h_matching_location;
+            break;
 
           default:
             parser->header_state = h_general;
@@ -1313,11 +1322,22 @@ size_t http_parser_execute (http_parser *parser,
                 parser->header_state = h_upgrade;
               }
               break;
+              
+            case h_matching_location:
+              parser->index++;
+              if (parser->index>sizeof(LOCATION)-1
+                || c!= LOCATION[parser->index]) {
+                parser->header_state = h_general;
+              } else if (parser->index == sizeof(LOCATION)-2) {
+                parser->header_state = h_location;
+              }
+              break;
 
             case h_connection:
             case h_content_length:
             case h_transfer_encoding:
             case h_upgrade:
+            case h_location:
               if (ch != ' ') parser->header_state = h_general;
               break;
 
@@ -1397,6 +1417,16 @@ size_t http_parser_execute (http_parser *parser,
 
             parser->content_length = ch - '0';
             break;
+          case h_location:
+            if (parser->location==NULL) {
+                parser->location = malloc(MAX_LOCATION_LENGTH);
+                memset(parser->location, 0, MAX_LOCATION_LENGTH);
+            }
+            if (parser->location_index<MAX_LOCATION_LENGTH-1) {
+                parser->location[parser->location_index] = ch;
+                parser->location_index++;
+            }
+            break;
 
           case h_connection:
             /* looking for 'Connection: keep-alive' */
@@ -1467,6 +1497,20 @@ size_t http_parser_execute (http_parser *parser,
             parser->content_length = t;
             break;
           }
+          
+          case h_location:
+            if (ch==' ')
+                break;
+                
+            if (parser->location==NULL) {
+                parser->location = malloc(MAX_LOCATION_LENGTH);
+                memset(parser->location, 0, MAX_LOCATION_LENGTH);
+            }
+            if (parser->location_index<MAX_LOCATION_LENGTH-1) {
+                parser->location[parser->location_index] = ch;
+                parser->location_index++;
+            }
+            break;
 
           /* Transfer-Encoding: chunked */
           case h_matching_transfer_encoding_chunked:
@@ -1583,6 +1627,9 @@ size_t http_parser_execute (http_parser *parser,
             case 1:
               parser->flags |= F_SKIPBODY;
               break;
+            
+            case -301:
+              return -301;
 
             default:
               SET_ERRNO(HPE_CB_headers_complete);

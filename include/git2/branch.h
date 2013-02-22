@@ -168,6 +168,20 @@ GIT_EXTERN(int) git_branch_tracking(
 GIT_EXTERN(int) git_branch_is_head(
 		git_reference *branch);
 
+GIT_EXTERN(int) git_setup_tracking_config(
+	git_repository *repo,
+	const char *branch_name,
+	const char *remote_name,
+	const char *merge_target);
+
+GIT_EXTERN(int) git_create_tracking_branch(
+    git_reference **branch,
+    git_repository *repo,
+    const git_oid *target,
+    const char *branch_name);
+
+
+
 /** @} */
 GIT_END_DECL
 #endif

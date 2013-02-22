@@ -100,6 +100,24 @@ static int create_tracking_branch(
 		git_reference_name(*branch));
 }
 
+int git_setup_tracking_config(
+	git_repository *repo,
+	const char *branch_name,
+	const char *remote_name,
+	const char *merge_target)
+{
+    return setup_tracking_config(repo, branch_name, remote_name, merge_target);
+}
+
+int git_create_tracking_branch(
+    git_reference **branch,
+    git_repository *repo,
+    const git_oid *target,
+    const char *branch_name)
+{
+    return create_tracking_branch(branch, repo, target, branch_name);
+}
+
 struct head_info {
 	git_repository *repo;
 	git_oid remote_head_oid;

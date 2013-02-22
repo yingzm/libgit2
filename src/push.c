@@ -14,6 +14,10 @@
 #include "vector.h"
 #include "push.h"
 
+extern int git_packbuilder_insert_tree_with_packobjects(git_packbuilder *pb, const git_oid *oid,
+    git_vector *packobjects);
+
+
 int git_push_new(git_push **out, git_remote *remote)
 {
 	git_push *p;
@@ -218,16 +222,99 @@ on_error:
 	return error == GIT_ITEROVER ? 0 : error;
 }
 
+static git_oid *git_oid_dup(const git_oid *oid)
+{
+    git_oid *dup_oid = git__malloc(sizeof(git_oid));
+    if (dup_oid==NULL)
+        return NULL;
+    
+    git_oid_cpy(dup_oid, oid);
+    
+    return dup_oid;
+}
+
+static int git__oid_cmp(const void *a, const void *b)
+{
+    const git_oid *oid_a = a, *oid_b = b;
+    return git_oid_cmp(oid_a, oid_b);
+}
+
+static int insert_tree_walk_cb(const char *root, const git_tree_entry *entry, void *payload)
+{
+	git_vector *packobjects = payload;
+    int index;
+    
+	/* A commit inside a tree represents a submodule commit and should be skipped. */
+	if(git_tree_entry_type(entry) == GIT_OBJ_COMMIT)
+		return 0;
+    
+    const git_oid *oid = git_tree_entry_id(entry);
+    index = git_vector_search(packobjects, oid);
+    if (index>=0)
+        return 0;
+    
+    git_vector_insert(packobjects, git_oid_dup(oid));
+    
+	return 0;
+}
+
+static int packobjects_insert_tree(git_repository *repo, git_vector *packobjects, const git_oid *oid)
+{
+    git_tree *tree;
+    
+    if (git_tree_lookup(&tree, repo, oid)<0)
+        return -1;
+    
+    git_vector_insert(packobjects, git_oid_dup(oid));
+
+	if (git_tree_walk(tree, GIT_TREEWALK_PRE, insert_tree_walk_cb, packobjects) < 0) {
+		git_tree_free(tree);
+		return -1;
+	}
+
+	git_tree_free(tree);
+    return 0;
+}
+
 static int queue_objects(git_push *push)
 {
-	git_vector commits;
+	git_vector commits, packobjects;
 	git_oid *o;
 	unsigned int i;
 	int error;
+    push_spec *spec;
 
-	if (git_vector_init(&commits, 0, NULL) < 0)
+	if (git_vector_init(&commits, 0, NULL) < 0 ||
+        git_vector_init(&packobjects, 0, git__oid_cmp) < 0)
 		return -1;
+    
+    // Record objects that already exists on remote
+    git_vector_foreach(&push->specs, i, spec) {
+        if (git_oid_iszero(&spec->roid))
+            continue;
+        
+        git_object *obj;
+        if ((error=git_object_lookup(&obj, push->repo, &spec->roid, GIT_OBJ_ANY))<0)
+            continue;
+    
+        switch (git_object_type(obj)) {
+        case GIT_OBJ_TAG:
+        case GIT_OBJ_COMMIT:
+            if ((error = packobjects_insert_tree(push->repo, &packobjects, git_commit_tree_id((git_commit *)obj)))<0) {
+                git_object_free(obj);
+                goto on_error;
+            }
+            break;
+        default:
+            git_object_free(obj);
+			giterr_set(GITERR_INVALID, "Given object type invalid");
+			error = -1;
+            goto on_error;
+        }
+    }
 
+
+    // Find all the commits for the push
 	if ((error = revwalk(&commits, push)) < 0)
 		goto on_error;
 
@@ -250,8 +337,8 @@ static int queue_objects(git_push *push)
 		switch (git_object_type(obj)) {
 		case GIT_OBJ_TAG: /* TODO: expect tags */
 		case GIT_OBJ_COMMIT:
-			if ((error = git_packbuilder_insert_tree(push->pb,
-					git_commit_tree_id((git_commit *)obj))) < 0) {
+            if ((error=git_packbuilder_insert_tree_with_packobjects(push->pb, git_commit_tree_id((git_commit *)obj),
+                    &packobjects))<0) {
 				git_object_free(obj);
 				goto on_error;
 			}
@@ -267,8 +354,13 @@ static int queue_objects(git_push *push)
 		git_object_free(obj);
 	}
 	error = 0;
-
+    
 on_error:
+    git_vector_foreach(&packobjects, i, o) {
+        git__free(0);
+    }
+    git_vector_free(&packobjects);
+    
 	git_vector_foreach(&commits, i, o) {
 		git__free(o);
 	}
@@ -276,6 +368,9 @@ on_error:
 	return error;
 }
 
+/**
+ * Fill spec.loid and spec.roid for push->specs for later pack builder
+ */
 static int calculate_work(git_push *push)
 {
 	git_remote_head *head;

@@ -1296,6 +1296,57 @@ int git_packbuilder_insert_tree(git_packbuilder *pb, const git_oid *oid)
 	return 0;
 }
 
+static int insert_tree_walk_with_packobjects(const char *root, const git_tree_entry *entry, void *payload)
+{
+    void **payloads = (void **)payload;
+	git_packbuilder *pb = payloads[0];
+    git_vector *packobjects = payloads[1];
+	git_buf buf = GIT_BUF_INIT;
+    const git_oid *oid;
+    
+	/* A commit inside a tree represents a submodule commit and should be skipped. */
+	if(git_tree_entry_type(entry) == GIT_OBJ_COMMIT)
+		return 0;
+    
+    oid = git_tree_entry_id(entry);
+    
+    // If the object is found in packobjects, then remote already has it, do not pack
+    if (git_vector_search(packobjects, oid)>=0)
+        return 0;
+
+	git_buf_puts(&buf, root);
+	git_buf_puts(&buf, git_tree_entry_name(entry));
+
+	if (git_packbuilder_insert(pb, git_tree_entry_id(entry),
+				   git_buf_cstr(&buf)) < 0) {
+		git_buf_free(&buf);
+		return -1;
+	}
+
+	git_buf_free(&buf);
+	return 0;
+    
+}
+
+int git_packbuilder_insert_tree_with_packobjects(git_packbuilder *pb, const git_oid *oid, git_vector *packobjects)
+{
+	git_tree *tree;
+
+	if (git_tree_lookup(&tree, pb->repo, oid) < 0 ||
+	    git_packbuilder_insert(pb, oid, NULL) < 0)
+		return -1;
+    
+    void *payloads[2] = {pb, packobjects};
+
+	if (git_tree_walk(tree, GIT_TREEWALK_PRE, insert_tree_walk_with_packobjects, payloads) < 0) {
+		git_tree_free(tree);
+		return -1;
+	}
+
+	git_tree_free(tree);
+	return 0;
+}
+
 uint32_t git_packbuilder_object_count(git_packbuilder *pb)
 {
 	return pb->nr_objects;

@@ -74,7 +74,7 @@ static int send_command(ssh_stream *s)
 	if (error<0)
 		goto cleanup;
 
-    printf("send command %s\n", request.ptr);
+//    printf("send command %s\n", request.ptr);
 	error = libssh2_channel_exec(t->channel, git_buf_cstr(&request));
 
 	if (error>=0)
@@ -104,7 +104,7 @@ static int ssh_stream_read(
 	gitno_buffer_setup(&t->socket, &buf, buffer, buf_size);
 
 	error = libssh2_channel_read(t->channel, buf.data, buf.len);
-    printf("read %ld %s\n", buf.offset, buf.data);
+//    printf("read %ld %s\n", buf.offset, buf.data);
 	if (error < 0)
 		return ssh_set_error(t->session);
 	else
@@ -124,7 +124,7 @@ static int ssh_stream_write(
 	ssh_stream *s = (ssh_stream *)stream;
 	ssh_subtransport *t = OWNING_SUBTRANSPORT(s);
 
-    printf("send %ld %s\n", len, buffer);
+//    printf("send %ld %s\n", len, buffer);
     
 	if (!s->sent_command && send_command(s)<0)
 		return -1;

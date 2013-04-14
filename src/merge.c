@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -28,45 +28,11 @@
 #include "git2/merge.h"
 #include "git2/refs.h"
 #include "git2/reset.h"
-#include "commit_list.h"
+#include "git2/checkout.h"
 #include "git2/signature.h"
 #include "git2/config.h"
 
 #include "xdiff/xdiff.h"
-
-
-int git_repository_merge_cleanup(git_repository *repo)
-{
-	int error = 0;
-	git_buf merge_head_path = GIT_BUF_INIT,
-		merge_mode_path = GIT_BUF_INIT,
-		merge_msg_path = GIT_BUF_INIT;
-
-	assert(repo);
-
-	if (git_buf_joinpath(&merge_head_path, repo->path_repository, GIT_MERGE_HEAD_FILE) < 0 ||
-		git_buf_joinpath(&merge_mode_path, repo->path_repository, GIT_MERGE_MODE_FILE) < 0 ||
-		git_buf_joinpath(&merge_msg_path, repo->path_repository, GIT_MERGE_MSG_FILE) < 0)
-		return -1;
-
-	if (git_path_isfile(merge_head_path.ptr)) {
-		if ((error = p_unlink(merge_head_path.ptr)) < 0)
-			goto cleanup;
-	}
-
-	if (git_path_isfile(merge_mode_path.ptr))
-		(void)p_unlink(merge_mode_path.ptr);
-
-	if (git_path_isfile(merge_msg_path.ptr))
-		(void)p_unlink(merge_msg_path.ptr);
-
-cleanup:
-        git_buf_free(&merge_msg_path);
-        git_buf_free(&merge_mode_path);
-        git_buf_free(&merge_head_path);
-
-        return error;
-}
 
 /* Merge base computation */
 
@@ -235,8 +201,12 @@ int git_merge__bases_many(git_commit_list **out, git_revwalk *walk, git_commit_l
 			if ((p->flags & flags) == flags)
 				continue;
 
-			if ((error = git_commit_list_parse(walk, p)) < 0)
-				return error;
+			if ((error = git_commit_list_parse(walk, p)) < 0) {
+                if (error==GIT_ENOTFOUND)
+                    continue;
+                else
+                    return error;
+            }
 
 			p->flags |= flags;
 			if (git_pqueue_insert(&list, p) < 0)
@@ -262,59 +232,6 @@ int git_merge__bases_many(git_commit_list **out, git_revwalk *walk, git_commit_l
 
 	*out = result;
 	return 0;
-}
-
-int git_repository_mergehead_foreach(git_repository *repo,
-	git_repository_mergehead_foreach_cb cb,
-	void *payload)
-{
-	git_buf merge_head_path = GIT_BUF_INIT, merge_head_file = GIT_BUF_INIT;
-	char *buffer, *line;
-	size_t line_num = 1;
-	git_oid oid;
-	int error = 0;
-
-	assert(repo && cb);
-
-	if ((error = git_buf_joinpath(&merge_head_path, repo->path_repository,
-		GIT_MERGE_HEAD_FILE)) < 0)
-		return error;
-
-	if ((error = git_futils_readbuffer(&merge_head_file,
-		git_buf_cstr(&merge_head_path))) < 0)
-		goto cleanup;
-
-	buffer = merge_head_file.ptr;
-
-	while ((line = git__strsep(&buffer, "\n")) != NULL) {
-		if (strlen(line) != GIT_OID_HEXSZ) {
-			giterr_set(GITERR_INVALID, "Unable to parse OID - invalid length");
-			error = -1;
-			goto cleanup;
-		}
-
-		if ((error = git_oid_fromstr(&oid, line)) < 0)
-			goto cleanup;
-
-		if (cb(&oid, payload) < 0) {
-			error = GIT_EUSER;
-			goto cleanup;
-		}
-
-		++line_num;
-	}
-
-	if (*buffer) {
-		giterr_set(GITERR_MERGE, "No EOL at line %d", line_num);
-		error = -1;
-		goto cleanup;
-	}
-
-cleanup:
-	git_buf_free(&merge_head_path);
-	git_buf_free(&merge_head_file);
-
-	return error;
 }
 
 /* Merge setup */
@@ -1347,8 +1264,10 @@ static int merge_ancestor_head(
 	for (i = 0; i < their_heads_len; i++)
 		git_oid_cpy(&oids[i + 1], &their_heads[i]->oid);
 	
-	if ((error = git_merge_base_many(&ancestor_oid, repo, oids, their_heads_len + 1)) < 0)
+	if ((error = git_merge_base_many(&ancestor_oid, repo, oids, their_heads_len + 1)) < 0) {
+        giterr_set(GITERR_MERGE, "Merge without ancestor is not supported, sorry.");
 		goto on_error;
+    }
 
 	error = git_merge_head_from_oid(ancestor_head, repo, &ancestor_oid);
 
@@ -1369,6 +1288,7 @@ GIT_INLINE(bool) merge_check_uptodate(
 	
 	return false;
 }
+
 /**
  * our_head must be not NULL. Because if ancestor_head==NULL && our_head==NULL,
  * it should return true.
@@ -1383,8 +1303,8 @@ GIT_INLINE(bool) merge_check_fastforward(
     assert(our_head!=NULL);
     
 	if ((flags & GIT_MERGE_NO_FASTFORWARD) == 0 &&
-        ancestor_head!=NULL &&
-		git_oid_cmp(&ancestor_head->oid, &our_head->oid) == 0) {
+		ancestor_head!=NULL &&
+        git_oid_cmp(&ancestor_head->oid, &our_head->oid) == 0) {
 		result->is_fastforward = 1;
 		git_oid_cpy(&result->fastforward_oid, &their_head->oid);
 		
@@ -1399,7 +1319,12 @@ static int merge_normalize_opts(
 	const git_merge_opts *given)
 {
 	int error = 0;
-	unsigned int default_checkout_strategy = GIT_CHECKOUT_SAFE_CREATE |	GIT_CHECKOUT_ALLOW_CONFLICTS;
+	unsigned int default_checkout_strategy = GIT_CHECKOUT_SAFE |
+		GIT_CHECKOUT_UPDATE_MISSING |
+		GIT_CHECKOUT_UPDATE_MODIFIED |
+		GIT_CHECKOUT_UPDATE_UNMODIFIED |
+		GIT_CHECKOUT_REMOVE_UNTRACKED |
+		GIT_CHECKOUT_ALLOW_CONFLICTS;
 
 	if (given != NULL) {
 		memcpy(opts, given, sizeof(git_merge_opts));
@@ -1453,7 +1378,7 @@ int git_merge(
 	if ((error = git_repository__ensure_not_bare(repo, "merge")) < 0)
 		goto on_error;
 	
-    if ((error = git_reference_lookup(&our_ref, repo, GIT_HEAD_FILE)) < 0)
+	if ((error = git_reference_lookup(&our_ref, repo, GIT_HEAD_FILE)) < 0)
         goto on_error;
     if ((error = git_merge_head_from_ref(&our_head, repo, our_ref)) < 0) {
         // HEAD not found means you have empty branch,
@@ -1477,18 +1402,18 @@ int git_merge(
             }
         }
     } else {
-        if ((error = merge_ancestor_head(&ancestor_head, repo, our_head, their_heads, their_heads_len)) < 0) {
+		if ((error = merge_ancestor_head(&ancestor_head, repo, our_head, their_heads, their_heads_len)) < 0) {
             if (error!=GIT_ENOTFOUND)
                 goto on_error;
             
-            // ancestor_head is NULL and our_head is not NULL. That probly caused by
+            // ancestor_head is NULL and our_head is not NULL. That probly caused by assigning remote url
             // to a completely different repository, just merge then.
             // We do nothing here, ancestor_head should be handled with care.
         }
     }
 	
 	if (their_heads_len == 1 &&
-		(merge_check_uptodate(result, our_head, their_heads[0]) ||
+		(merge_check_uptodate(result, ancestor_head, their_heads[0]) ||
 		merge_check_fastforward(result, ancestor_head, our_head, their_heads[0], opts.merge_flags))) {
 		*out = result;
 		goto done;
@@ -1498,7 +1423,7 @@ int git_merge(
 	if ((error = git_merge__setup(repo, our_head, their_heads, their_heads_len, opts.merge_flags)) < 0)
 		goto on_error;
 	
-    if ( (ancestor_head!=NULL && (error = git_commit_tree(&ancestor_tree, ancestor_head->commit)) < 0) ||
+	if ( (ancestor_head!=NULL && (error = git_commit_tree(&ancestor_tree, ancestor_head->commit)) < 0) ||
 		(error = git_commit_tree(&our_tree, our_head->commit)) < 0)
 		goto on_error;
 	
@@ -1571,7 +1496,7 @@ int git_merge__cleanup(git_repository *repo)
 	
 	if (git_buf_joinpath(&merge_head_path, repo->path_repository, GIT_MERGE_HEAD_FILE) < 0 ||
 		git_buf_joinpath(&merge_mode_path, repo->path_repository, GIT_MERGE_MODE_FILE) < 0 ||
-		git_buf_joinpath(&merge_mode_path, repo->path_repository, GIT_MERGE_MODE_FILE) < 0)
+		git_buf_joinpath(&merge_msg_path, repo->path_repository, GIT_MERGE_MSG_FILE) < 0)
 		return -1;
 	
 	if (git_path_isfile(merge_head_path.ptr)) {
@@ -1749,3 +1674,10 @@ void git_merge_head_free(git_merge_head *head)
     
     git__free(head);
 }
+
+int git_repository_merge_cleanup(git_repository *repository)
+{
+    return git_merge__cleanup(repository);
+}
+
+

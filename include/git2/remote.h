@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -60,7 +60,7 @@ GIT_EXTERN(int) git_remote_create(
  * See `git_tag_create()` for rules about valid names.
  *
  * @param out pointer to the new remote object
- * @param repo the associated repository
+ * @param repo the associated repository. May be NULL for a "dangling" remote.
  * @param fetch the fetch refspec to use for this remote. May be NULL for defaults.
  * @param url the remote repository's URL
  * @return 0 or an error code
@@ -70,6 +70,16 @@ GIT_EXTERN(int) git_remote_create_inmemory(
 		git_repository *repo,
 		const char *fetch,
 		const char *url);
+
+/**
+ * Sets the owning repository for the remote.  This is only allowed on
+ * dangling remotes.
+ *
+ * @param remote the remote to configure
+ * @param repo the repository that will own the remote
+ * @return 0 or an error code
+ */
+GIT_EXTERN(int) git_remote_set_repository(git_remote *remote, git_repository *repo);
 
 /**
  * Get the information for a particular remote
@@ -449,6 +459,10 @@ GIT_EXTERN(int) git_remote_update_fetchhead(git_remote *remote);
  * @param value 0 to disable updating FETCH_HEAD
  */
 GIT_EXTERN(void) git_remote_set_update_fetchhead(git_remote *remote, int value);
+
+GIT_EXTERN(int) git_remote_shallow_depth(git_remote *remote);
+
+GIT_EXTERN(void) git_remote_set_shallow_depth(git_remote *remote, int value);
 
 /** @} */
 GIT_END_DECL

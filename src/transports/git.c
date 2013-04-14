@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -179,7 +179,7 @@ static int _git_uploadpack_ls(
 	const char *url,
 	git_smart_subtransport_stream **stream)
 {
-	char *host, *port;
+	char *host=NULL, *port=NULL;
 	git_stream *s;
 
 	*stream = NULL;
@@ -233,7 +233,7 @@ static int _git_receivepack_ls(
 	const char *url,
 	git_smart_subtransport_stream **stream)
 {
-	char *host, *port;
+	char *host=NULL, *port=NULL;
 	git_stream *s;
 
 	*stream = NULL;

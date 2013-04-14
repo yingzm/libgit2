@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -28,11 +28,6 @@ struct unpacked {
 	void *data;
 	struct git_delta_index *index;
 	unsigned int depth;
-};
-
-struct tree_walk_context {
-	git_packbuilder *pb;
-	git_buf buf;
 };
 
 #ifdef GIT_THREADS
@@ -1264,38 +1259,91 @@ int git_packbuilder_write(git_packbuilder *pb, const char *path)
 
 static int cb_tree_walk(const char *root, const git_tree_entry *entry, void *payload)
 {
-	struct tree_walk_context *ctx = payload;
+	git_packbuilder *pb = payload;
+	git_buf buf = GIT_BUF_INIT;
 
 	/* A commit inside a tree represents a submodule commit and should be skipped. */
-	if (git_tree_entry_type(entry) == GIT_OBJ_COMMIT)
+	if(git_tree_entry_type(entry) == GIT_OBJ_COMMIT)
 		return 0;
 
-	if (git_buf_sets(&ctx->buf, root) < 0 ||
-		git_buf_puts(&ctx->buf, git_tree_entry_name(entry)) < 0)
-		return -1;
+	git_buf_puts(&buf, root);
+	git_buf_puts(&buf, git_tree_entry_name(entry));
 
-	return git_packbuilder_insert(ctx->pb,
-		git_tree_entry_id(entry),
-		git_buf_cstr(&ctx->buf));
+	if (git_packbuilder_insert(pb, git_tree_entry_id(entry),
+				   git_buf_cstr(&buf)) < 0) {
+		git_buf_free(&buf);
+		return -1;
+	}
+
+	git_buf_free(&buf);
+	return 0;
 }
 
 int git_packbuilder_insert_tree(git_packbuilder *pb, const git_oid *oid)
 {
 	git_tree *tree;
-	struct tree_walk_context context = { pb, GIT_BUF_INIT };
 
 	if (git_tree_lookup(&tree, pb->repo, oid) < 0 ||
 	    git_packbuilder_insert(pb, oid, NULL) < 0)
 		return -1;
 
-	if (git_tree_walk(tree, GIT_TREEWALK_PRE, cb_tree_walk, &context) < 0) {
+	if (git_tree_walk(tree, GIT_TREEWALK_PRE, cb_tree_walk, pb) < 0) {
 		git_tree_free(tree);
-		git_buf_free(&context.buf);
 		return -1;
 	}
 
 	git_tree_free(tree);
-	git_buf_free(&context.buf);
+	return 0;
+}
+
+static int insert_tree_walk_with_packobjects(const char *root, const git_tree_entry *entry, void *payload)
+{
+    void **payloads = (void **)payload;
+	git_packbuilder *pb = payloads[0];
+    git_vector *packobjects = payloads[1];
+	git_buf buf = GIT_BUF_INIT;
+    const git_oid *oid;
+    
+	/* A commit inside a tree represents a submodule commit and should be skipped. */
+	if(git_tree_entry_type(entry) == GIT_OBJ_COMMIT)
+		return 0;
+    
+    oid = git_tree_entry_id(entry);
+    
+    // If the object is found in packobjects, then remote already has it, do not pack
+    if (git_vector_search(packobjects, oid)>=0)
+        return 0;
+
+	git_buf_puts(&buf, root);
+	git_buf_puts(&buf, git_tree_entry_name(entry));
+
+	if (git_packbuilder_insert(pb, git_tree_entry_id(entry),
+				   git_buf_cstr(&buf)) < 0) {
+		git_buf_free(&buf);
+		return -1;
+	}
+
+	git_buf_free(&buf);
+	return 0;
+    
+}
+
+int git_packbuilder_insert_tree_with_packobjects(git_packbuilder *pb, const git_oid *oid, git_vector *packobjects)
+{
+	git_tree *tree;
+
+	if (git_tree_lookup(&tree, pb->repo, oid) < 0 ||
+	    git_packbuilder_insert(pb, oid, NULL) < 0)
+		return -1;
+    
+    void *payloads[2] = {pb, packobjects};
+
+	if (git_tree_walk(tree, GIT_TREEWALK_PRE, insert_tree_walk_with_packobjects, payloads) < 0) {
+		git_tree_free(tree);
+		return -1;
+	}
+
+	git_tree_free(tree);
 	return 0;
 }
 

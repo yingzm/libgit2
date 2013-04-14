@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -97,10 +97,18 @@ static int apply_basic_credential(git_buf *buf, git_cred *cred)
 
 	git_buf_printf(&raw, "%s:%s", c->username, c->password);
 
-	if (git_buf_oom(&raw) ||
-		git_buf_puts(buf, "Authorization: Basic ") < 0 ||
-		git_buf_put_base64(buf, git_buf_cstr(&raw), raw.size) < 0 ||
-		git_buf_puts(buf, "\r\n") < 0)
+	if (git_buf_oom(&raw) || git_buf_puts(buf, "Authorization: Basic ") < 0)
+        goto on_error;
+    
+    if (cred->credtype==GIT_CREDTYPE_USERPASS_PLAINTEXT) {
+        if (git_buf_put_base64(buf, git_buf_cstr(&raw), raw.size) < 0)
+            goto on_error;
+    } else if (cred->credtype==GIT_CREDTYPE_USERPASS_BASE64) {
+        if (git_buf_put(buf, c->password, strlen(c->password))<0)
+            goto on_error;
+    }
+    
+    if (git_buf_puts(buf, "\r\n") < 0)
 		goto on_error;
 
 	error = 0;
@@ -131,7 +139,7 @@ static int gen_request(
 		git_buf_printf(buf, "Accept: application/x-git-%s-result\r\n", s->service);
 		git_buf_printf(buf, "Content-Type: application/x-git-%s-request\r\n", s->service);
 
-		if (s->chunked)
+		if (content_length==0)
 			git_buf_puts(buf, "Transfer-Encoding: chunked\r\n");
 		else
 			git_buf_printf(buf, "Content-Length: %"PRIuZ "\r\n", content_length);
@@ -139,7 +147,8 @@ static int gen_request(
 		git_buf_puts(buf, "Accept: */*\r\n");
 
 	/* Apply credentials to the request */
-	if (t->cred && t->cred->credtype == GIT_CREDTYPE_USERPASS_PLAINTEXT &&
+	if (t->cred &&
+        (t->cred->credtype == GIT_CREDTYPE_USERPASS_PLAINTEXT || t->cred->credtype==GIT_CREDTYPE_USERPASS_BASE64) &&
 		t->auth_mechanism == GIT_HTTP_AUTH_BASIC &&
 		apply_basic_credential(buf, t->cred) < 0)
 		return -1;
@@ -228,6 +237,18 @@ static int on_header_value(http_parser *parser, const char *str, size_t len)
 	return 0;
 }
 
+static char *strtail(char *str, const char *substr)
+{
+    int str_len = strlen(str), substr_len = strlen(substr);
+    if (str_len<substr_len)
+        return NULL;
+    
+    if (strcmp(str+str_len-substr_len, substr)==0)
+        return str+str_len-substr_len;
+    else
+        return NULL;
+}
+
 static int on_headers_complete(http_parser *parser)
 {
 	parser_context *ctx = (parser_context *) parser->data;
@@ -266,12 +287,38 @@ static int on_headers_complete(http_parser *parser)
 			return t->parse_error = PARSE_ERROR_REPLAY;
 		}
 	}
+    
+    if (parser->status_code==301 || parser->status_code==302 || parser->status_code==307) {
+        printf("%s", parser->location);
+        if (t->owner->redirect_url)
+            git__free(t->owner->redirect_url);
+        char *ptr = strtail(parser->location, upload_pack_ls_service_url);
+        if (ptr==NULL)
+            ptr = strtail(parser->location, receive_pack_ls_service_url);
+        if (ptr==NULL)
+            ptr = strtail(parser->location, upload_pack_service);
+        if (ptr==NULL)
+            ptr = strtail(parser->location, receive_pack_service);
+
+        if (ptr) {
+            t->owner->redirect_url = git__strndup(parser->location, ptr-parser->location);
+            return GIT_EREDIRECT;
+        } else {
+            giterr_set(GITERR_NET, "Malformed HTTP redirect is not supported");
+            return t->parse_error = PARSE_ERROR_GENERIC;
+        }
+    }
 
 	/* Check for a 200 HTTP status code. */
 	if (parser->status_code != 200) {
-		giterr_set(GITERR_NET,
-			"Unexpected HTTP status code: %d",
-			parser->status_code);
+        if (parser->status_code==401)
+            giterr_set(GITERR_NET, "Authentication failed");
+        else if (parser->status_code==404)
+            giterr_set(GITERR_NET, "No repository found");
+        else
+            giterr_set(GITERR_NET,
+                "Unexpected HTTP status code: %d",
+                parser->status_code);
 		return t->parse_error = PARSE_ERROR_GENERIC;
 	}
 
@@ -393,6 +440,68 @@ static int write_chunk(gitno_socket *socket, const char *buffer, size_t len)
 	return 0;
 }
 
+static int http_redirect_to(git_smart_subtransport_stream *stream)
+{
+    http_stream *s = (http_stream *)stream;
+    http_subtransport *t = OWNING_SUBTRANSPORT(s);
+    const char *url = t->owner->redirect_url;
+    const char *default_port;
+    int flags=0, ret;
+    
+    git__free(t->host);
+    t->host = NULL;
+    git__free(t->port);
+    t->port = NULL;
+    t->path = NULL;
+	if (!t->host || !t->port || !t->path) {
+		if (!git__prefixcmp(url, prefix_http)) {
+			url = url + strlen(prefix_http);
+			default_port = "80";
+		}
+
+		if (!git__prefixcmp(url, prefix_https)) {
+			url += strlen(prefix_https);
+			default_port = "443";
+			t->use_ssl = 1;
+		}
+
+		if (!default_port)
+			return -1;
+
+		if ((ret = gitno_extract_host_and_port(&t->host, &t->port,
+				url, default_port)) < 0)
+			return ret;
+
+		t->path = strchr(url, '/');
+	}
+
+    t->connected = 0;
+    s->sent_request = 0;
+    s->received_response = 0;
+    
+    if (t->socket.socket)
+        gitno_close(&t->socket);
+
+    if (t->use_ssl) {
+        int transport_flags;
+
+        if (t->owner->parent.read_flags(&t->owner->parent, &transport_flags) < 0)
+            return -1;
+
+        flags |= GITNO_CONNECT_SSL;
+
+        if (GIT_TRANSPORTFLAGS_NO_CHECK_CERT & transport_flags)
+            flags |= GITNO_CONNECT_SSL_NO_CHECK_CERT;
+    }
+
+    if (gitno_connect(&t->socket, t->host, t->port, flags) < 0)
+        return -1;
+
+    t->connected = 1;
+
+    return 0;
+}
+
 static int http_stream_read(
 	git_smart_subtransport_stream *stream,
 	char *buffer,
@@ -472,6 +581,14 @@ replay:
 			&t->settings,
 			t->parse_buffer.data,
 			t->parse_buffer.offset);
+        
+        if (bytes_parsed==GIT_EREDIRECT) {
+            if (http_redirect_to(stream)<0) {
+                giterr_set(GITERR_NET, "HTTP redirect error");
+                return -1;
+            } else
+                goto replay;
+        }
 
 		t->parser.data = NULL;
 
@@ -704,8 +821,8 @@ static int http_receivepack(
 	s = (http_stream *)*stream;
 
 	/* Use Transfer-Encoding: chunked for this request */
-	s->chunked = 1;
-	s->parent.write = http_stream_write_chunked;
+//	s->chunked = 1;
+//	s->parent.write = http_stream_write_chunked;
 
 	s->service = receive_pack_service;
 	s->service_url = receive_pack_service_url;

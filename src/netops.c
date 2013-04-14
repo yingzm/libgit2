@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -10,7 +10,6 @@
 #	include <sys/select.h>
 #	include <sys/time.h>
 #	include <netdb.h>
-#	include <netinet/in.h>
 #       include <arpa/inet.h>
 #else
 #	include <ws2tcpip.h>
@@ -136,7 +135,10 @@ static int gitno__recv(gitno_buffer *buf)
 	if (ret < 0) {
 		net_set_error("Error receiving socket data");
 		return -1;
-	}
+	} else if (buf->len-buf->offset>0 && ret==0) {
+        net_set_error("Remote disconnect");
+        return -1;
+    }
 
 	buf->offset += ret;
 	return ret;
@@ -487,7 +489,6 @@ int gitno_connect(gitno_socket *s_out, const char *host, const char *port, int f
 	/* Oops, we couldn't connect to any address */
 	if (s == INVALID_SOCKET && p == NULL) {
 		giterr_set(GITERR_OS, "Failed to connect to %s", host);
-		p_freeaddrinfo(info);
 		return -1;
 	}
 
@@ -580,7 +581,7 @@ int gitno_select_in(gitno_buffer *buf, long int sec, long int usec)
 
 int gitno_extract_host_and_port(char **host, char **port, const char *url, const char *default_port)
 {
-	char *colon, *slash, *delim;
+	char *colon, *slash, *delim, *host_with_username, *at;
 
 	colon = strchr(url, ':');
 	slash = strchr(url, '/');
@@ -598,7 +599,15 @@ int gitno_extract_host_and_port(char **host, char **port, const char *url, const
 	GITERR_CHECK_ALLOC(*port);
 
 	delim = colon == NULL ? slash : colon;
-	*host = git__strndup(url, delim - url);
+	host_with_username = git__strndup(url, delim - url);
+    at = strrchr(host_with_username, '@');
+    if (at==NULL)
+        *host = host_with_username;
+    else {
+        *host = git__strdup(at+1);
+        git__free(host_with_username);
+    }
+    
 	GITERR_CHECK_ALLOC(*host);
 
 	return 0;

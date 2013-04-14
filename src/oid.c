@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -95,13 +95,10 @@ char *git_oid_tostr(char *out, size_t n, const git_oid *oid)
 {
 	char str[GIT_OID_HEXSZ];
 
-	if (!out || n == 0)
+	if (!out || n == 0 || !oid)
 		return "";
 
 	n--; /* allow room for terminating NUL */
-
-	if (oid == NULL)
-		n = 0;
 
 	if (n > 0) {
 		git_oid_fmt(str, oid);

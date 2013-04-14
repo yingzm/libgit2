@@ -572,10 +572,8 @@ static int collect_attr_files(
 		error = git_futils_find_system_file(&dir, GIT_ATTR_FILE_SYSTEM);
 		if (!error)
 			error = push_attr_file(repo, files, NULL, dir.ptr);
-		else if (error == GIT_ENOTFOUND) {
-			giterr_clear();
+		else if (error == GIT_ENOTFOUND)
 			error = 0;
-		}
 	}
 
  cleanup:

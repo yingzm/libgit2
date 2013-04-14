@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -610,7 +610,7 @@ static int loose_backend__read(void **buffer_p, size_t *len_p, git_otype *type_p
 	assert(backend && oid);
 
 	if (locate_object(&object_path, (loose_backend *)backend, oid) < 0)
-		error = git_odb__error_notfound("no matching loose object", oid);
+		error = GIT_ENOTFOUND;
 	else if ((error = read_loose(&raw, &object_path)) == 0) {
 		*buffer_p = raw.data;
 		*len_p = raw.len;

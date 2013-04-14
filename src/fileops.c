@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -121,7 +121,7 @@ mode_t git_futils_canonical_mode(mode_t raw_mode)
 
 int git_futils_readbuffer_fd(git_buf *buf, git_file fd, size_t len)
 {
-	ssize_t read_size = 0;
+	ssize_t read_size;
 
 	git_buf_clear(buf);
 
@@ -352,7 +352,6 @@ int git_futils_mkdir_r(const char *path, const char *base, const mode_t mode)
 
 typedef struct {
 	const char *base;
-	size_t baselen;
 	uint32_t flags;
 	int error;
 } futils__rmdir_data;
@@ -444,13 +443,9 @@ static int futils__rmdir_recurs_foreach(void *opaque, git_buf *path)
 
 static int futils__rmdir_empty_parent(void *opaque, git_buf *path)
 {
-	futils__rmdir_data *data = opaque;
-	int error;
+	int error = p_rmdir(path->ptr);
 
-	if (git_buf_len(path) <= data->baselen)
-		return GIT_ITEROVER;
-
-	error = p_rmdir(git_buf_cstr(path));
+	GIT_UNUSED(opaque);
 
 	if (error) {
 		int en = errno;
@@ -462,7 +457,7 @@ static int futils__rmdir_empty_parent(void *opaque, git_buf *path)
 			giterr_clear();
 			error = GIT_ITEROVER;
 		} else {
-			futils__error_cannot_rmdir(git_buf_cstr(path), NULL);
+			futils__error_cannot_rmdir(path->ptr, NULL);
 		}
 	}
 
@@ -480,10 +475,9 @@ int git_futils_rmdir_r(
 	if (git_path_join_unrooted(&fullpath, path, base, NULL) < 0)
 		return -1;
 
-	data.base    = base ? base : "";
-	data.baselen = base ? strlen(base) : 0;
-	data.flags   = flags;
-	data.error   = 0;
+	data.base  = base ? base : "";
+	data.flags = flags;
+	data.error = 0;
 
 	error = futils__rmdir_recurs_foreach(&data, &fullpath);
 

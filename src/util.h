@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -119,15 +119,7 @@ GIT_INLINE(const char *) git__next_line(const char *s)
 	return s;
 }
 
-typedef int (*git__tsort_cmp)(const void *a, const void *b);
-
-extern void git__tsort(void **dst, size_t size, git__tsort_cmp cmp);
-
-typedef int (*git__tsort_r_cmp)(const void *a, const void *b, void *payload);
-
-extern void git__tsort_r(
-	void **dst, size_t size, git__tsort_r_cmp cmp, void *payload);
-
+extern void git__tsort(void **dst, size_t size, int (*cmp)(const void *, const void *));
 
 /**
  * @param position If non-NULL, this will be set to the position where the
@@ -138,15 +130,7 @@ extern int git__bsearch(
 	void **array,
 	size_t array_len,
 	const void *key,
-	int (*compare)(const void *key, const void *element),
-	size_t *position);
-
-extern int git__bsearch_r(
-	void **array,
-	size_t array_len,
-	const void *key,
-	int (*compare_r)(const void *key, const void *element, void *payload),
-	void *payload,
+	int (*compare)(const void *, const void *),
 	size_t *position);
 
 extern int git__strcmp_cb(const void *a, const void *b);

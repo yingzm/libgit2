@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -162,11 +162,6 @@ static git_diff_delta *diff_delta__last_for_item(
 		break;
 	case GIT_DELTA_ADDED:
 		if (git_oid_cmp(&delta->new_file.oid, &item->oid) == 0)
-			return delta;
-		break;
-	case GIT_DELTA_UNTRACKED:
-		if (diff->strcomp(delta->new_file.path, item->path) == 0 &&
-			git_oid_cmp(&delta->new_file.oid, &item->oid) == 0)
 			return delta;
 		break;
 	case GIT_DELTA_MODIFIED:
@@ -418,7 +413,7 @@ static int maybe_modified(
 	git_delta_t status = GIT_DELTA_MODIFIED;
 	unsigned int omode = oitem->mode;
 	unsigned int nmode = nitem->mode;
-	bool new_is_workdir = (new_iter->type == GIT_ITERATOR_TYPE_WORKDIR);
+	bool new_is_workdir = (new_iter->type == GIT_ITERATOR_WORKDIR);
 
 	GIT_UNUSED(old_iter);
 
@@ -536,14 +531,14 @@ static bool entry_is_prefixed(
 {
 	size_t pathlen;
 
-	if (!item || diff->pfxcomp(item->path, prefix_item->path) != 0)
+	if (!prefix_item || diff->pfxcomp(prefix_item->path, item->path))
 		return false;
 
-	pathlen = strlen(prefix_item->path);
+	pathlen = strlen(item->path);
 
-	return (prefix_item->path[pathlen - 1] == '/' ||
-			item->path[pathlen] == '\0' ||
-			item->path[pathlen] == '/');
+	return (item->path[pathlen - 1] == '/' ||
+			prefix_item->path[pathlen] == '\0' ||
+			prefix_item->path[pathlen] == '/');
 }
 
 static int diff_list_init_from_iterators(
@@ -556,9 +551,7 @@ static int diff_list_init_from_iterators(
 
 	/* Use case-insensitive compare if either iterator has
 	 * the ignore_case bit set */
-	if (!git_iterator_ignore_case(old_iter) &&
-		!git_iterator_ignore_case(new_iter))
-	{
+	if (!old_iter->ignore_case && !new_iter->ignore_case) {
 		diff->opts.flags &= ~GIT_DIFF_DELTAS_ARE_ICASE;
 
 		diff->strcomp    = git__strcmp;
@@ -591,7 +584,8 @@ int git_diff__from_iterators(
 
 	*diff_ptr = NULL;
 
-	if (!diff || diff_list_init_from_iterators(diff, old_iter, new_iter) < 0)
+	if (!diff ||
+		diff_list_init_from_iterators(diff, old_iter, new_iter) < 0)
 		goto fail;
 
 	if (diff->opts.flags & GIT_DIFF_DELTAS_ARE_ICASE) {
@@ -622,24 +616,13 @@ int git_diff__from_iterators(
 			 * instead of just generating a DELETE record
 			 */
 			if ((diff->opts.flags & GIT_DIFF_INCLUDE_TYPECHANGE_TREES) != 0 &&
-				entry_is_prefixed(diff, nitem, oitem))
+				entry_is_prefixed(diff, oitem, nitem))
 			{
 				/* this entry has become a tree! convert to TYPECHANGE */
 				git_diff_delta *last = diff_delta__last_for_item(diff, oitem);
 				if (last) {
 					last->status = GIT_DELTA_TYPECHANGE;
 					last->new_file.mode = GIT_FILEMODE_TREE;
-				}
-
-				/* If new_iter is a workdir iterator, then this situation
-				 * will certainly be followed by a series of untracked items.
-				 * Unless RECURSE_UNTRACKED_DIRS is set, skip over them...
-				 */
-				if (S_ISDIR(nitem->mode) &&
-					!(diff->opts.flags & GIT_DIFF_RECURSE_UNTRACKED_DIRS))
-				{
-					if (git_iterator_advance(new_iter, &nitem) < 0)
-						goto fail;
 				}
 			}
 
@@ -652,7 +635,6 @@ int git_diff__from_iterators(
 		 */
 		else if (cmp > 0) {
 			git_delta_t delta_type = GIT_DELTA_UNTRACKED;
-			bool contains_oitem = entry_is_prefixed(diff, oitem, nitem);
 
 			/* check if contained in ignored parent directory */
 			if (git_buf_len(&ignore_prefix) &&
@@ -664,12 +646,14 @@ int git_diff__from_iterators(
 				 * it or if the user requested the contents of untracked
 				 * directories and it is not under an ignored directory.
 				 */
+				bool contains_tracked =
+					entry_is_prefixed(diff, nitem, oitem);
 				bool recurse_untracked =
 					(delta_type == GIT_DELTA_UNTRACKED &&
 					 (diff->opts.flags & GIT_DIFF_RECURSE_UNTRACKED_DIRS) != 0);
 
 				/* do not advance into directories that contain a .git file */
-				if (!contains_oitem && recurse_untracked) {
+				if (!contains_tracked && recurse_untracked) {
 					git_buf *full = NULL;
 					if (git_iterator_current_workdir_path(new_iter, &full) < 0)
 						goto fail;
@@ -677,7 +661,7 @@ int git_diff__from_iterators(
 						recurse_untracked = false;
 				}
 
-				if (contains_oitem || recurse_untracked) {
+				if (contains_tracked || recurse_untracked) {
 					/* if this directory is ignored, remember it as the
 					 * "ignore_prefix" for processing contained items
 					 */
@@ -689,7 +673,13 @@ int git_diff__from_iterators(
 						goto fail;
 
 					continue;
-				}
+				} else {
+                    /* Folder should not be a part of delta */
+                    if (git_iterator_advance_into_directory(new_iter, &nitem) < 0)
+                        goto fail;
+
+                    continue;
+                }
 			}
 
 			/* In core git, the next two "else if" clauses are effectively
@@ -716,21 +706,21 @@ int git_diff__from_iterators(
 			else if (git_iterator_current_is_ignored(new_iter))
 				delta_type = GIT_DELTA_IGNORED;
 
-			else if (new_iter->type != GIT_ITERATOR_TYPE_WORKDIR)
+			else if (new_iter->type != GIT_ITERATOR_WORKDIR)
 				delta_type = GIT_DELTA_ADDED;
 
 			if (diff_delta__from_one(diff, delta_type, nitem) < 0)
 				goto fail;
 
 			/* if we are generating TYPECHANGE records then check for that
-			 * instead of just generating an ADDED/UNTRACKED record
+			 * instead of just generating an ADD/UNTRACKED record
 			 */
 			if (delta_type != GIT_DELTA_IGNORED &&
 				(diff->opts.flags & GIT_DIFF_INCLUDE_TYPECHANGE_TREES) != 0 &&
-				contains_oitem)
+				entry_is_prefixed(diff, nitem, oitem))
 			{
-				/* this entry was prefixed with a tree - make TYPECHANGE */
-				git_diff_delta *last = diff_delta__last_for_item(diff, nitem);
+				/* this entry was a tree! convert to TYPECHANGE */
+				git_diff_delta *last = diff_delta__last_for_item(diff, oitem);
 				if (last) {
 					last->status = GIT_DELTA_TYPECHANGE;
 					last->old_file.mode = GIT_FILEMODE_TREE;
@@ -788,8 +778,8 @@ int git_diff_tree_to_tree(
 	assert(diff && repo);
 
 	DIFF_FROM_ITERATORS(
-		git_iterator_for_tree_range(&a, old_tree, 0, pfx, pfx),
-		git_iterator_for_tree_range(&b, new_tree, 0, pfx, pfx)
+		git_iterator_for_tree_range(&a, old_tree, pfx, pfx),
+		git_iterator_for_tree_range(&b, new_tree, pfx, pfx)
 	);
 
 	return error;
@@ -810,8 +800,8 @@ int git_diff_tree_to_index(
 		return error;
 
 	DIFF_FROM_ITERATORS(
-		git_iterator_for_tree_range(&a, old_tree, 0, pfx, pfx),
-	    git_iterator_for_index_range(&b, index, 0, pfx, pfx)
+		git_iterator_for_tree_range(&a, old_tree, pfx, pfx),
+	    git_iterator_for_index_range(&b, index, pfx, pfx)
 	);
 
 	return error;
@@ -831,8 +821,8 @@ int git_diff_index_to_workdir(
 		return error;
 
 	DIFF_FROM_ITERATORS(
-		git_iterator_for_index_range(&a, index, 0, pfx, pfx),
-	    git_iterator_for_workdir_range(&b, repo, 0, pfx, pfx)
+		git_iterator_for_index_range(&a, index, pfx, pfx),
+	    git_iterator_for_workdir_range(&b, repo, pfx, pfx)
 	);
 
 	return error;
@@ -850,8 +840,8 @@ int git_diff_tree_to_workdir(
 	assert(diff && repo);
 
 	DIFF_FROM_ITERATORS(
-		git_iterator_for_tree_range(&a, old_tree, 0, pfx, pfx),
-	    git_iterator_for_workdir_range(&b, repo, 0, pfx, pfx)
+		git_iterator_for_tree_range(&a, old_tree, pfx, pfx),
+	    git_iterator_for_workdir_range(&b, repo, pfx, pfx)
 	);
 
 	return error;

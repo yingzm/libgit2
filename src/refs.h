@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -44,6 +44,8 @@
 #define GIT_STASH_FILE "stash"
 #define GIT_REFS_STASH_FILE GIT_REFS_DIR GIT_STASH_FILE
 
+#define GIT_SHALLOW_FILE "shallow"
+
 #define GIT_REFNAME_MAX 1024
 
 struct git_reference {
@@ -69,7 +71,6 @@ int git_reference__normalize_name_lax(char *buffer_out, size_t out_size, const c
 int git_reference__normalize_name(git_buf *buf, const char *name, unsigned int flags);
 int git_reference__is_valid_name(const char *refname, unsigned int flags);
 int git_reference__update(git_repository *repo, const git_oid *oid, const char *ref_name);
-int git_reference__is_branch(const char *ref_name);
 
 /**
  * Lookup a reference by name and try to resolve to an OID.

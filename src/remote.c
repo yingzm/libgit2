@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -96,8 +96,9 @@ static int create_internal(git_remote **out, git_repository *repo, const char *n
 	GITERR_CHECK_ALLOC(remote);
 
 	remote->repo = repo;
-	remote->check_cert = 1;
+	remote->check_cert = 0;
 	remote->update_fetchhead = 1;
+    remote->shallow_depth = 0;
 
 	if (git_vector_init(&remote->refs, 32, NULL) < 0)
 		goto on_error;
@@ -156,7 +157,6 @@ static int ensure_remote_doesnot_exist(git_repository *repo, const char *name)
 int git_remote_create(git_remote **out, git_repository *repo, const char *name, const char *url)
 {
 	git_buf buf = GIT_BUF_INIT;
-	git_remote *remote = NULL;
 	int error;
 
 	if ((error = ensure_remote_name_is_valid(name)) < 0)
@@ -168,21 +168,19 @@ int git_remote_create(git_remote **out, git_repository *repo, const char *name, 
 	if (git_buf_printf(&buf, "+refs/heads/*:refs/remotes/%s/*", name) < 0)
 		return -1;
 
-	if (create_internal(&remote, repo, name, url, git_buf_cstr(&buf)) < 0)
+	if (create_internal(out, repo, name, url, git_buf_cstr(&buf)) < 0)
 		goto on_error;
 
 	git_buf_free(&buf);
 
-	if (git_remote_save(remote) < 0)
+	if (git_remote_save(*out) < 0)
 		goto on_error;
-
-	*out = remote;
 
 	return 0;
 
 on_error:
 	git_buf_free(&buf);
-	git_remote_free(remote);
+	git_remote_free(*out);
 	return -1;
 }
 
@@ -195,6 +193,19 @@ int git_remote_create_inmemory(git_remote **out, git_repository *repo, const cha
 		return error;
 
 	*out = remote;
+	return 0;
+}
+
+int git_remote_set_repository(git_remote *remote, git_repository *repo)
+{
+	assert(repo);
+
+	if (remote->repo) {
+		giterr_set(GITERR_INVALID, "Remotes can't change repositiories.");
+		return GIT_ERROR;
+	}
+
+	remote->repo = repo;
 	return 0;
 }
 
@@ -218,8 +229,9 @@ int git_remote_load(git_remote **out, git_repository *repo, const char *name)
 	GITERR_CHECK_ALLOC(remote);
 
 	memset(remote, 0x0, sizeof(git_remote));
-	remote->check_cert = 1;
+	remote->check_cert = 0;
 	remote->update_fetchhead = 1;
+    remote->shallow_depth = 0;
 	remote->name = git__strdup(name);
 	GITERR_CHECK_ALLOC(remote->name);
 
@@ -578,8 +590,8 @@ int git_remote_connect(git_remote *remote, git_direction direction)
 	if (!remote->check_cert)
 		flags |= GIT_TRANSPORTFLAGS_NO_CHECK_CERT;
 
-	if (t->connect(t, url, remote->cred_acquire_cb, remote->cred_acquire_payload, direction, flags) < 0)
-		goto on_error;
+    if (t->connect(t, url, remote->cred_acquire_cb, remote->cred_acquire_payload, direction, flags) < 0)
+        goto on_error;
 
 	remote->transport = t;
 
@@ -1380,4 +1392,14 @@ int git_remote_update_fetchhead(git_remote *remote)
 void git_remote_set_update_fetchhead(git_remote *remote, int value)
 {
 	remote->update_fetchhead = value;
+}
+
+int git_remote_shallow_depth(git_remote *remote)
+{
+    return remote->shallow_depth;
+}
+
+void git_remote_set_shallow_depth(git_remote *remote, int value)
+{
+    remote->shallow_depth = value;
 }

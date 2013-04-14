@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -207,15 +207,6 @@ GIT_EXTERN(git_otype) git_tree_entry_type(const git_tree_entry *entry);
  * @return filemode as an integer
  */
 GIT_EXTERN(git_filemode_t) git_tree_entry_filemode(const git_tree_entry *entry);
-
-/**
- * Compare two tree entries
- *
- * @param e1 first tree entry
- * @param e2 second tree entry
- * @return <0 if e1 is before e2, 0 if e1 == e2, >0 if e1 is after e2
- */
-GIT_EXTERN(int) git_tree_entry_cmp(const git_tree_entry *e1, const git_tree_entry *e2);
 
 /**
  * Convert a tree entry to the git_object it points too.

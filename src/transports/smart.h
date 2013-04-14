@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -21,6 +21,7 @@
 #define GIT_CAP_INCLUDE_TAG "include-tag"
 #define GIT_CAP_DELETE_REFS "delete-refs"
 #define GIT_CAP_REPORT_STATUS "report-status"
+#define GIT_CAP_SHALLOW "shallow"
 
 enum git_pkt_type {
 	GIT_PKT_CMD,
@@ -37,6 +38,8 @@ enum git_pkt_type {
 	GIT_PKT_OK,
 	GIT_PKT_NG,
 	GIT_PKT_UNPACK,
+    GIT_PKT_SHALLOW,
+    GIT_PKT_UNSHALLOW,
 };
 
 /* Used for multi-ack */
@@ -107,6 +110,16 @@ typedef struct {
 	int unpack_ok;
 } git_pkt_unpack;
 
+typedef struct {
+    enum git_pkt_type type;
+    git_oid oid;
+} git_pkt_shallow;
+
+typedef struct {
+    enum git_pkt_type type;
+    git_oid oid;
+} git_pkt_unshallow;
+
 typedef struct transport_smart_caps {
 	int common:1,
 		ofs_delta:1,
@@ -115,7 +128,8 @@ typedef struct transport_smart_caps {
 		side_band_64k:1,
 		include_tag:1,
 		delete_refs:1,
-		report_status:1;
+		report_status:1,
+        shallow:1;
 } transport_smart_caps;
 
 typedef void (*packetsize_cb)(size_t received, void *payload);
@@ -124,6 +138,7 @@ typedef struct {
 	git_transport parent;
 	git_remote *owner;
 	char *url;
+    char *redirect_url;
 	git_cred_acquire_cb cred_acquire_cb;
 	void *cred_acquire_payload;
 	int direction;
@@ -154,6 +169,7 @@ int git_smart__push(git_transport *transport, git_push *push);
 int git_smart__negotiate_fetch(
 	git_transport *transport,
 	git_repository *repo,
+    int shallow_depth,
 	const git_remote_head * const *refs,
 	size_t count);
 
@@ -173,6 +189,7 @@ int git_pkt_parse_line(git_pkt **head, const char *line, const char **out, size_
 int git_pkt_buffer_flush(git_buf *buf);
 int git_pkt_send_flush(GIT_SOCKET s);
 int git_pkt_buffer_done(git_buf *buf);
-int git_pkt_buffer_wants(const git_remote_head * const *refs, size_t count, transport_smart_caps *caps, git_buf *buf);
+int git_pkt_buffer_wants(const git_remote_head * const *refs, size_t count, transport_smart_caps *caps, git_buf *buf,
+    int shallow_depth, git_vector *shallow_vector);
 int git_pkt_buffer_have(git_oid *oid, git_buf *buf);
 void git_pkt_free(git_pkt *pkt);

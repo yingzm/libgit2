@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -389,7 +389,8 @@ int git_index_set_caps(git_index *index, unsigned int caps)
 		index->no_symlinks = ((caps & GIT_INDEXCAP_NO_SYMLINKS) != 0);
 	}
 
-	if (old_ignore_case != index->ignore_case) {
+	if (old_ignore_case != index->ignore_case)
+	{
 		index_set_ignore_case(index, index->ignore_case);
 	}
 
@@ -619,14 +620,14 @@ static int index_entry_reuc_init(git_index_reuc_entry **reuc_out,
 	if (reuc->path == NULL)
 		return -1;
 
-	if ((reuc->mode[0] = ancestor_mode) > 0)
-		git_oid_cpy(&reuc->oid[0], ancestor_oid);
+	reuc->mode[0] = ancestor_mode;
+	git_oid_cpy(&reuc->oid[0], ancestor_oid);
 
-	if ((reuc->mode[1] = our_mode) > 0)
-		git_oid_cpy(&reuc->oid[1], our_oid);
+	reuc->mode[1] = our_mode;
+	git_oid_cpy(&reuc->oid[1], our_oid);
 
-	if ((reuc->mode[2] = their_mode) > 0)
-		git_oid_cpy(&reuc->oid[2], their_oid);
+	reuc->mode[2] = their_mode;
+	git_oid_cpy(&reuc->oid[2], their_oid);
 
 	*reuc_out = reuc;
 	return 0;
@@ -733,7 +734,7 @@ static int index_conflict_to_reuc(git_index *index, const char *path)
 	return ret;
 }
 
-int git_index_add_bypath(git_index *index, const char *path)
+int git_index_add_from_workdir(git_index *index, const char *path)
 {
 	git_index_entry *entry = NULL;
 	int ret;
@@ -754,21 +755,6 @@ int git_index_add_bypath(git_index *index, const char *path)
 on_error:
 	index_entry_free(entry);
 	return ret;
-}
-
-int git_index_remove_bypath(git_index *index, const char *path)
-{
-	int ret;
-
-	assert(index && path);
-
-	if (((ret = git_index_remove(index, path, 0)) < 0 &&
-		ret != GIT_ENOTFOUND) ||
-		((ret = index_conflict_to_reuc(index, path)) < 0 &&
-		ret != GIT_ENOTFOUND))
-		return ret;
-
-	return 0;
 }
 
 int git_index_add(git_index *index, const git_index_entry *source_entry)
@@ -850,6 +836,7 @@ int git_index_remove_directory(git_index *index, const char *dir, int stage)
 	return error;
 }
 
+
 static int index_find(git_index *index, const char *path, int stage)
 {
 	struct entry_srch_key srch_key;
@@ -870,10 +857,7 @@ int git_index_find(git_index *index, const char *path)
 
 	if ((pos = git_vector_bsearch2(
 			&index->entries, index->entries_search_path, path)) < 0)
-	{
-		giterr_set(GITERR_INDEX, "Index does not contain %s", path);
 		return pos;
-	}
 
 	/* Since our binary search only looked at path, we may be in the
 	 * middle of a list of stages.
@@ -1418,10 +1402,9 @@ static int parse_index(git_index *index, const char *buffer, size_t buffer_size)
 
 #undef seek_forward
 
-	/* Entries are stored case-sensitively on disk. */
-	index->entries.sorted = !index->ignore_case;
-	git_vector_sort(&index->entries);
-
+	/* force sorting in the vector: the entries are
+	 * assured to be sorted on the index */
+	index->entries.sorted = 1;
 	return 0;
 }
 
@@ -1652,16 +1635,10 @@ static int read_tree_cb(const char *root, const git_tree_entry *tentry, void *da
 
 	entry->mode = tentry->attr;
 	entry->oid = tentry->oid;
-
-	if (path.size < GIT_IDXENTRY_NAMEMASK)
-		entry->flags = path.size & GIT_IDXENTRY_NAMEMASK;
-	else
-		entry->flags = GIT_IDXENTRY_NAMEMASK;
-
 	entry->path = git_buf_detach(&path);
 	git_buf_free(&path);
 
-	if (git_vector_insert(&index->entries, entry) < 0) {
+	if (index_insert(index, entry, 0) < 0) {
 		index_entry_free(entry);
 		return -1;
 	}

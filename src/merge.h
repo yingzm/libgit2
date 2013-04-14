@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -9,7 +9,6 @@
 
 #include "vector.h"
 #include "commit_list.h"
-#include "vector.h"
 #include "diff_tree.h"
 
 #include "git2/types.h"
@@ -45,7 +44,6 @@ int git_merge__setup(
 	const git_merge_head *their_heads[],
 	size_t their_heads_len,
 	unsigned int flags);
-
 int git_merge__bases_many(git_commit_list **out, git_revwalk *walk, git_commit_list_node *one, git_vector *twos);
 int git_merge__cleanup(git_repository *repo);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -29,7 +29,7 @@ static int create_branch(
 	const char *name)
 {
 	git_commit *head_obj = NULL;
-	git_reference *branch_ref = NULL;
+	git_reference *branch_ref;
 	int error;
 
 	/* Find the target commit */
@@ -100,12 +100,29 @@ static int create_tracking_branch(
 		git_reference_name(*branch));
 }
 
+int git_setup_tracking_config(
+	git_repository *repo,
+	const char *branch_name,
+	const char *remote_name,
+	const char *merge_target)
+{
+    return setup_tracking_config(repo, branch_name, remote_name, merge_target);
+}
+
+int git_create_tracking_branch(
+    git_reference **branch,
+    git_repository *repo,
+    const git_oid *target,
+    const char *branch_name)
+{
+    return create_tracking_branch(branch, repo, target, branch_name);
+}
+
 struct head_info {
 	git_repository *repo;
 	git_oid remote_head_oid;
 	git_buf branchname;
 	const git_refspec *refspec;
-	bool found;
 };
 
 static int reference_matches_remote_head(
@@ -120,16 +137,16 @@ static int reference_matches_remote_head(
 	 */
 
 	/* Stop looking if we've already found a match */
-	if (head_info->found)
+	if (git_buf_len(&head_info->branchname) > 0)
 		return 0;
 
 	if (git_reference_name_to_id(
 		&oid,
 		head_info->repo,
 		reference_name) < 0) {
-			/* If the reference doesn't exists, it obviously cannot match the expected oid. */
-			giterr_clear();
-			return 0;
+			/* TODO: How to handle not found references?
+			 */
+			return -1;
 	}
 
 	if (git_oid_cmp(&head_info->remote_head_oid, &oid) == 0) {
@@ -140,14 +157,10 @@ static int reference_matches_remote_head(
 			reference_name) < 0)
 				return -1;
 		
-		if (git_buf_len(&head_info->branchname) > 0) {
-			if (git_buf_sets(
-				&head_info->branchname,
-				git_buf_cstr(&head_info->branchname) + strlen(GIT_REFS_HEADS_DIR)) < 0)
-					return -1;
-
-			head_info->found = 1;
-		}
+		if (git_buf_sets(
+			&head_info->branchname,
+			git_buf_cstr(&head_info->branchname) + strlen(GIT_REFS_HEADS_DIR)) < 0)
+				return -1;
 	}
 
 	return 0;
@@ -212,7 +225,6 @@ static int update_head_to_remote(git_repository *repo, git_remote *remote)
 	git_buf_init(&head_info.branchname, 16);
 	head_info.repo = repo;
 	head_info.refspec = git_remote_fetchspec(remote);
-	head_info.found = 0;
 	
 	/* Determine the remote tracking reference name from the local master */
 	if (git_refspec_transform_r(
@@ -225,7 +237,7 @@ static int update_head_to_remote(git_repository *repo, git_remote *remote)
 	if (reference_matches_remote_head(git_buf_cstr(&remote_master_name), &head_info) < 0)
 		goto cleanup;
 
-	if (head_info.found) {
+	if (git_buf_len(&head_info.branchname) > 0) {
 		retcode = update_head_to_new_branch(
 			repo,
 			&head_info.remote_head_oid,
@@ -242,7 +254,7 @@ static int update_head_to_remote(git_repository *repo, git_remote *remote)
 		&head_info) < 0)
 			goto cleanup;
 
-	if (head_info.found) {
+	if (git_buf_len(&head_info.branchname) > 0) {
 		retcode = update_head_to_new_branch(
 			repo,
 			&head_info.remote_head_oid,
@@ -250,39 +262,13 @@ static int update_head_to_remote(git_repository *repo, git_remote *remote)
 
 		goto cleanup;
 	} else {
-		/* TODO: What should we do if nothing has been found?
-		 */
+        retcode = git_repository_set_head_detached(repo, &head_info.remote_head_oid);
+        goto cleanup;
 	}
 
 cleanup:
 	git_buf_free(&remote_master_name);
 	git_buf_free(&head_info.branchname);
-	return retcode;
-}
-
-static int update_head_to_branch(
-		git_repository *repo,
-		const git_clone_options *options)
-{
-	int retcode;
-	git_buf remote_branch_name = GIT_BUF_INIT;
-	git_reference* remote_ref = NULL;
-	
-	assert(options->checkout_branch);
-
-	if ((retcode = git_buf_printf(&remote_branch_name, GIT_REFS_REMOTES_DIR "%s/%s",
-		options->remote_name, options->checkout_branch)) < 0 )
-		goto cleanup;
-
-	if ((retcode = git_reference_lookup(&remote_ref, repo, git_buf_cstr(&remote_branch_name))) < 0)
-		goto cleanup;
-
-	retcode = update_head_to_new_branch(repo, git_reference_target(remote_ref),
-		options->checkout_branch);
-
-cleanup:
-	git_reference_free(remote_ref);
-	git_buf_free(&remote_branch_name);
 	return retcode;
 }
 
@@ -350,6 +336,7 @@ static int setup_remotes_and_fetch(
 	/* Construct an origin remote */
 	if (!create_and_configure_origin(&origin, repo, url, options)) {
 		git_remote_set_update_fetchhead(origin, 0);
+        git_remote_set_shallow_depth(origin, options->shallow_depth);
 
 		/* Connect and download everything */
 		if (!git_remote_connect(origin, GIT_DIRECTION_FETCH)) {
@@ -357,20 +344,14 @@ static int setup_remotes_and_fetch(
 						options->fetch_progress_payload)) {
 				/* Create "origin/foo" branches for all remote branches */
 				if (!git_remote_update_tips(origin)) {
-					/* Point HEAD to the requested branch */
-					if (options->checkout_branch) {
-						if (!update_head_to_branch(repo, options))
-							retcode = 0;
-					}
 					/* Point HEAD to the same ref as the remote's head */
-					else if (!update_head_to_remote(repo, origin)) {
+					if (!update_head_to_remote(repo, origin)) {
 						retcode = 0;
 					}
 				}
 			}
 			git_remote_disconnect(origin);
 		}
-		git_remote_free(origin);
 	}
 
 	return retcode;
@@ -382,8 +363,10 @@ static bool path_is_okay(const char *path)
 	/* The path must either not exist, or be an empty directory */
 	if (!git_path_exists(path)) return true;
 	if (!git_path_is_empty_dir(path)) {
+        char *basename = git_path_basename(path);
 		giterr_set(GITERR_INVALID,
-					  "'%s' exists and is not an empty directory", path);
+					  "'%s' exists and is not an empty directory", basename);
+        free(basename);
 		return false;
 	}
 	return true;
@@ -400,7 +383,7 @@ static bool should_checkout(
 	if (!opts)
 		return false;
 
-	if (opts->checkout_strategy == GIT_CHECKOUT_NONE)
+	if (opts->checkout_strategy == GIT_CHECKOUT_DEFAULT)
 		return false;
 
 	return !git_repository_head_orphan(repo);
@@ -433,7 +416,7 @@ int git_clone(
 	GITERR_CHECK_VERSION(&normOptions, GIT_CLONE_OPTIONS_VERSION, "git_clone_options");
 
 	if (!path_is_okay(local_path)) {
-		return GIT_ERROR;
+		return GIT_EEXISTS;
 	}
 
 	if (!(retcode = git_repository_init(&repo, local_path, normOptions.bare))) {

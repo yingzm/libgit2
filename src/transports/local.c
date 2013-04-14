@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -219,6 +219,7 @@ static int local_ls(git_transport *transport, git_headlist_cb list_cb, void *pay
 static int local_negotiate_fetch(
 	git_transport *transport,
 	git_repository *repo,
+    int shallow_depth,
 	const git_remote_head * const *refs,
 	size_t count)
 {

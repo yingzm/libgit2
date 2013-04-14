@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -108,6 +108,7 @@ int git_fetch_negotiate(git_remote *remote)
 	 */
 	return t->negotiate_fetch(t,
 		remote->repo,
+        remote->shallow_depth,
 		(const git_remote_head * const *)remote->refs.contents,
 		remote->refs.length);
 }

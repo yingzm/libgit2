@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -31,10 +31,12 @@ enum {
 	GIT_EUNMERGED = -10,
 	GIT_ENONFASTFORWARD = -11,
 	GIT_EINVALIDSPEC = -12,
-	GIT_EMERGECONFLICT = -13,
 
 	GIT_PASSTHROUGH = -30,
 	GIT_ITEROVER = -31,
+    
+    // EREDIRECT is used to HTTP 301/302/307 Redirect 
+    GIT_EREDIRECT = -301
 };
 
 typedef struct {
@@ -64,8 +66,8 @@ typedef enum {
 	GITERR_THREAD,
 	GITERR_STASH,
 	GITERR_CHECKOUT,
-	GITERR_FETCHHEAD,
 	GITERR_MERGE,
+	GITERR_FETCHHEAD,
 } git_error_t;
 
 /**

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -23,8 +23,9 @@
 #	define MIN(x,y) (((x) < (y) ? (x) : (y)))
 #endif
 
-static int binsearch(
-	void **dst, const void *x, size_t size, git__tsort_r_cmp cmp, void *payload)
+typedef int (*cmp_ptr_t)(const void *, const void *);
+
+static int binsearch(void **dst, const void *x, size_t size, cmp_ptr_t cmp)
 {
 	int l, c, r;
 	void *lx, *cx;
@@ -37,12 +38,12 @@ static int binsearch(
 	lx = dst[l];
 
 	/* check for beginning conditions */
-	if (cmp(x, lx, payload) < 0)
+	if (cmp(x, lx) < 0)
 		return 0;
 
-	else if (cmp(x, lx, payload) == 0) {
+	else if (cmp(x, lx) == 0) {
 		int i = 1;
-		while (cmp(x, dst[i], payload) == 0)
+		while (cmp(x, dst[i]) == 0)
 			i++;
 		return i;
 	}
@@ -50,7 +51,7 @@ static int binsearch(
 	/* guaranteed not to be >= rx */
 	cx = dst[c];
 	while (1) {
-		const int val = cmp(x, cx, payload);
+		const int val = cmp(x, cx);
 		if (val < 0) {
 			if (c - l <= 1) return c;
 			r = c;
@@ -61,7 +62,7 @@ static int binsearch(
 		} else {
 			do {
 				cx = dst[++c];
-			} while (cmp(x, cx, payload) == 0);
+			} while (cmp(x, cx) == 0);
 			return c;
 		}
 		c = l + ((r - l) >> 1);
@@ -70,8 +71,7 @@ static int binsearch(
 }
 
 /* Binary insertion sort, but knowing that the first "start" entries are sorted. Used in timsort. */
-static void bisort(
-	void **dst, size_t start, size_t size, git__tsort_r_cmp cmp, void *payload)
+static void bisort(void **dst, size_t start, size_t size, cmp_ptr_t cmp)
 {
 	size_t i;
 	void *x;
@@ -80,12 +80,12 @@ static void bisort(
 	for (i = start; i < size; i++) {
 		int j;
 		/* If this entry is already correct, just move along */
-		if (cmp(dst[i - 1], dst[i], payload) <= 0)
+		if (cmp(dst[i - 1], dst[i]) <= 0)
 			continue;
 
 		/* Else we need to find the right place, shift everything over, and squeeze in */
 		x = dst[i];
-		location = binsearch(dst, x, i, cmp, payload);
+		location = binsearch(dst, x, i, cmp);
 		for (j = (int)i - 1; j >= location; j--) {
 			dst[j + 1] = dst[j];
 		}
@@ -102,8 +102,7 @@ struct tsort_run {
 
 struct tsort_store {
 	size_t alloc;
-	git__tsort_r_cmp cmp;
-	void *payload;
+	cmp_ptr_t cmp;
 	void **storage;
 };
 
@@ -119,8 +118,7 @@ static void reverse_elements(void **dst, ssize_t start, ssize_t end)
 	}
 }
 
-static ssize_t count_run(
-	void **dst, ssize_t start, ssize_t size, struct tsort_store *store)
+static ssize_t count_run(void **dst, ssize_t start, ssize_t size, struct tsort_store *store)
 {
 	ssize_t curr = start + 2;
 
@@ -128,7 +126,7 @@ static ssize_t count_run(
 		return 1;
 
 	if (start >= size - 2) {
-		if (store->cmp(dst[size - 2], dst[size - 1], store->payload) > 0) {
+		if (store->cmp(dst[size - 2], dst[size - 1]) > 0) {
 			void *tmp = dst[size - 1];
 			dst[size - 1] = dst[size - 2];
 			dst[size - 2] = tmp;
@@ -137,15 +135,13 @@ static ssize_t count_run(
 		return 2;
 	}
 
-	if (store->cmp(dst[start], dst[start + 1], store->payload) <= 0) {
-		while (curr < size - 1 &&
-				store->cmp(dst[curr - 1], dst[curr], store->payload) <= 0)
+	if (store->cmp(dst[start], dst[start + 1]) <= 0) {
+		while (curr < size - 1 && store->cmp(dst[curr - 1], dst[curr]) <= 0)
 			curr++;
 
 		return curr - start;
 	} else {
-		while (curr < size - 1 &&
-				store->cmp(dst[curr - 1], dst[curr], store->payload) > 0)
+		while (curr < size - 1 && store->cmp(dst[curr - 1], dst[curr]) > 0)
 			curr++;
 
 		/* reverse in-place */
@@ -223,7 +219,7 @@ static void merge(void **dst, const struct tsort_run *stack, ssize_t stack_curr,
 
 		for (k = curr; k < curr + A + B; k++) {
 			if ((i < A) && (j < curr + A + B)) {
-				if (store->cmp(storage[i], dst[j], store->payload) <= 0)
+				if (store->cmp(storage[i], dst[j]) <= 0)
 					dst[k] = storage[i++];
 				else
 					dst[k] = dst[j++];
@@ -239,7 +235,7 @@ static void merge(void **dst, const struct tsort_run *stack, ssize_t stack_curr,
 
 		for (k = curr + A + B - 1; k >= curr; k--) {
 			if ((i >= 0) && (j >= curr)) {
-				if (store->cmp(dst[j], storage[i], store->payload) > 0)
+				if (store->cmp(dst[j], storage[i]) > 0)
 					dst[k] = dst[j--];
 				else
 					dst[k] = storage[i--];
@@ -311,7 +307,7 @@ static ssize_t collapse(void **dst, struct tsort_run *stack, ssize_t stack_curr,
 	if (run < minrun) run = minrun;\
 	if (run > (ssize_t)size - curr) run = size - curr;\
 	if (run > len) {\
-		bisort(&dst[curr], len, run, cmp, payload);\
+		bisort(&dst[curr], len, run, cmp);\
 		len = run;\
 	}\
 	run_stack[stack_curr].start = curr;\
@@ -333,8 +329,7 @@ static ssize_t collapse(void **dst, struct tsort_run *stack, ssize_t stack_curr,
 }\
 while (0)
 
-void git__tsort_r(
-	void **dst, size_t size, git__tsort_r_cmp cmp, void *payload)
+void git__tsort(void **dst, size_t size, cmp_ptr_t cmp)
 {
 	struct tsort_store _store, *store = &_store;
 	struct tsort_run run_stack[128];
@@ -345,7 +340,7 @@ void git__tsort_r(
 	ssize_t minrun;
 
 	if (size < 64) {
-		bisort(dst, 1, size, cmp, payload);
+		bisort(dst, 1, size, cmp);
 		return;
 	}
 
@@ -356,7 +351,6 @@ void git__tsort_r(
 	store->alloc = 0;
 	store->storage = NULL;
 	store->cmp = cmp;
-	store->payload = payload;
 
 	PUSH_NEXT();
 	PUSH_NEXT();
@@ -370,14 +364,4 @@ void git__tsort_r(
 
 		PUSH_NEXT();
 	}
-}
-
-static int tsort_r_cmp(const void *a, const void *b, void *payload)
-{
-	return ((git__tsort_cmp)payload)(a, b);
-}
-
-void git__tsort(void **dst, size_t size, git__tsort_cmp cmp)
-{
-	git__tsort_r(dst, size, tsort_r_cmp, cmp);
 }

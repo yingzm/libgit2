@@ -1,5 +1,5 @@
 /*
- * Copyright (C) the libgit2 contributors. All rights reserved.
+ * Copyright (C) 2009-2012 the libgit2 contributors
  *
  * This file is part of libgit2, distributed under the GNU GPL v2 with
  * a Linking Exception. For full terms see the included COPYING file.
@@ -23,14 +23,14 @@ static transport_definition dummy_transport_definition = { NULL, 1, git_transpor
 
 static git_smart_subtransport_definition http_subtransport_definition = { git_smart_subtransport_http, 1 };
 static git_smart_subtransport_definition git_subtransport_definition = { git_smart_subtransport_git, 0 };
+static git_smart_subtransport_definition ssh_subtransport_definition = { git_smart_subtransport_ssh, 0 };
 
 static transport_definition transports[] = {
 	{"git://", 1, git_transport_smart, &git_subtransport_definition},
 	{"http://", 1, git_transport_smart, &http_subtransport_definition},
 	{"https://", 1, git_transport_smart, &http_subtransport_definition},
+	{"ssh://", 1, git_transport_smart, &ssh_subtransport_definition},
 	{"file://", 1, git_transport_local, NULL},
-	{"git+ssh://", 1, git_transport_dummy, NULL},
-	{"ssh+git://", 1, git_transport_dummy, NULL},
 	{NULL, 0, 0}
 };
 

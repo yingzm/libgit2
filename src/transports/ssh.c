@@ -228,6 +228,19 @@ static int ssh_receivepack(
     return -1;
 }
 
+static const char *s_password = NULL;
+
+static void keyboard_interactive_callback(const char *name, int name_len,
+    const char *instruction, int instruction_len, int num_prompts,
+    const LIBSSH2_USERAUTH_KBDINT_PROMPT *prompts,
+    LIBSSH2_USERAUTH_KBDINT_RESPONSE *responses, void **abstract)
+{
+    if (responses!=NULL && s_password!=NULL) {
+        responses[0].text = strdup(s_password);
+        responses[0].length = strlen(s_password);
+    }
+}
+
 static int ssh_action(
 	git_smart_subtransport_stream **stream,
 	git_smart_subtransport *smart_transport,
@@ -274,6 +287,7 @@ static int ssh_action(
 		if (libssh2_session_handshake(t->session,
 			(libssh2_socket_t)(t->socket.socket))<0)
 			return ssh_set_error(t->session);
+        
 
 		if (t->owner->cred_acquire_cb(&t->cred, t->owner->url,
 			GIT_CREDTYPE_SSH_KEY | GIT_CREDTYPE_SSH_PASSWORD,
@@ -284,8 +298,26 @@ static int ssh_action(
 
         if (t->cred->credtype==GIT_CREDTYPE_SSH_PASSWORD) {
             git_cred_ssh_password *c = (git_cred_ssh_password *)t->cred;
-            if (libssh2_userauth_password(t->session, c->username, c->password)<0)
-                return ssh_set_error(t->session);
+            char *auth_list = NULL;
+            
+            auth_list = libssh2_userauth_list(t->session, c->username, strlen(c->username));
+            printf("ssh authentications: %s\n", auth_list);
+            
+            if (strstr(auth_list, "password")) {
+                if (libssh2_userauth_password(t->session, c->username, c->password)<0)
+                    return ssh_set_error(t->session);
+            } else if (strstr(auth_list, "keyboard-interactive")) {
+                s_password = c->password;
+                if (libssh2_userauth_keyboard_interactive(t->session, c->username, &keyboard_interactive_callback)<0) {
+                    s_password = NULL;
+                    return ssh_set_error(t->session);
+                }
+                s_password = NULL;
+            } else {
+                giterr_set(GITERR_NET, "SSH error: password or keyboard-interactive authentication not supported");
+
+                return -1;
+            }
         } else if (t->cred->credtype==GIT_CREDTYPE_SSH_KEY) {
             git_cred_ssh_key *c = (git_cred_ssh_key *)t->cred;
             if (libssh2_userauth_publickey_fromfile(t->session, c->username, NULL, c->private_key, c->pass)<0)

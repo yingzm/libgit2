@@ -11,6 +11,7 @@
 #include "buffer.h"
 #include "netops.h"
 #include "smart.h"
+#include "auth_digest.h"
 
 static const char *prefix_http = "http://";
 static const char *prefix_https = "https://";
@@ -23,6 +24,7 @@ static const char *receive_pack_service_url = "/git-receive-pack";
 static const char *get_verb = "GET";
 static const char *post_verb = "POST";
 static const char *basic_authtype = "Basic";
+static const char *digest_authtype = "Digest";
 
 #define OWNING_SUBTRANSPORT(s) ((http_subtransport *)(s)->parent.subtransport)
 
@@ -39,6 +41,7 @@ enum last_cb {
 
 typedef enum {
 	GIT_HTTP_AUTH_BASIC = 1,
+    GIT_HTTP_AUTH_DIGEST,
 } http_authmechanism_t;
 
 typedef struct {
@@ -64,6 +67,8 @@ typedef struct {
 	http_authmechanism_t auth_mechanism;
 	unsigned connected : 1,
 		use_ssl : 1;
+    unsigned int nc;    // used for DIGEST authentication
+    
 
 	/* Parser structures */
 	http_parser parser;
@@ -121,6 +126,42 @@ on_error:
 	return error;
 }
 
+static int apply_digest_credential(git_buf *buf, http_stream *s)
+{
+    http_subtransport *t = OWNING_SUBTRANSPORT(s);
+    git_cred_userpass_plaintext *c = (git_cred_userpass_plaintext *)t->cred;
+    git_buf raw = GIT_BUF_INIT, uri = GIT_BUF_INIT, nc=GIT_BUF_INIT;
+    
+    if (t->www_authenticate.length==0)
+        return 0;
+    
+    if (c->username[0]=='\0' && c->password[0]=='\0')
+        return 0;
+    
+    char *www_authenticate = git_vector_get(&t->www_authenticate, 0);
+    
+    git_buf_printf(&uri, "%s%s", t->path, s->service_url);
+    git_buf_printf(&nc, "%08d", t->nc);
+    
+    DigestParams params;
+    memset(&params, 0, sizeof(params));
+    params.method = strdup(s->verb);
+    params.uri = strdup(uri.ptr);
+    params.username = strdup(c->username);
+    params.password = strdup(c->password);
+    params.nc = strdup(nc.ptr);
+    params.cnonce = strdup("0a4f113b");
+    initDigestParams(&params, www_authenticate);
+    
+    calcDigest(&params, &raw);
+    
+    t->nc++;
+    
+    git_buf_put(buf, raw.ptr, raw.size);
+ 
+    return 0;
+}
+
 static int gen_request(
 	git_buf *buf,
 	http_stream *s,
@@ -147,11 +188,14 @@ static int gen_request(
 		git_buf_puts(buf, "Accept: */*\r\n");
 
 	/* Apply credentials to the request */
-	if (t->cred &&
-        (t->cred->credtype == GIT_CREDTYPE_USERPASS_PLAINTEXT || t->cred->credtype==GIT_CREDTYPE_USERPASS_BASE64) &&
-		t->auth_mechanism == GIT_HTTP_AUTH_BASIC &&
-		apply_basic_credential(buf, t->cred) < 0)
-		return -1;
+	if (t->cred && t->cred->credtype == GIT_CREDTYPE_USERPASS_PLAINTEXT) {
+		if (t->auth_mechanism == GIT_HTTP_AUTH_BASIC &&
+            apply_basic_credential(buf, t->cred) < 0)
+            return -1;
+        else if (t->auth_mechanism==GIT_HTTP_AUTH_DIGEST &&
+            apply_digest_credential(buf, s) < 0)
+            return -1;
+    }
 
 	git_buf_puts(buf, "\r\n");
 
@@ -174,7 +218,10 @@ static int parse_unauthorized_response(
 			(entry[5] == '\0' || entry[5] == ' ')) {
 			*allowed_types |= GIT_CREDTYPE_USERPASS_PLAINTEXT;
 			*auth_mechanism = GIT_HTTP_AUTH_BASIC;
-		}
+		} else if (!strncmp(entry, digest_authtype, 6) && entry[6]==' ') {
+            *allowed_types |= GIT_CREDTYPE_USERPASS_PLAINTEXT;
+            *auth_mechanism = GIT_HTTP_AUTH_DIGEST;
+        }
 	}
 
 	return 0;
@@ -271,7 +318,7 @@ static int on_headers_complete(http_parser *parser)
 		if (parse_unauthorized_response(&t->www_authenticate,
 			&allowed_types, &t->auth_mechanism) < 0)
 			return t->parse_error = PARSE_ERROR_GENERIC;
-
+        
 		if (allowed_types &&
 			(!t->cred || 0 == (t->cred->credtype & allowed_types))) {
 
@@ -283,7 +330,6 @@ static int on_headers_complete(http_parser *parser)
 
 			assert(t->cred);
 
-			/* Successfully acquired a credential. */
 			return t->parse_error = PARSE_ERROR_REPLAY;
 		}
 	}
@@ -384,9 +430,6 @@ static int on_body_fill_buffer(http_parser *parser, const char *str, size_t len)
 
 static void clear_parser_state(http_subtransport *t)
 {
-	unsigned i;
-	char *entry;
-
 	http_parser_init(&t->parser, HTTP_RESPONSE);
 	gitno_buffer_setup(&t->socket,
 		&t->parse_buffer,
@@ -406,10 +449,7 @@ static void clear_parser_state(http_subtransport *t)
 	git__free(t->content_type);
 	t->content_type = NULL;
 
-	git_vector_foreach(&t->www_authenticate, i, entry)
-		git__free(entry);
-
-	git_vector_free(&t->www_authenticate);
+    /// www_authenticate is not freed, because we need the info for laster authenticate
 }
 
 static int write_chunk(gitno_socket *socket, const char *buffer, size_t len)
@@ -438,6 +478,43 @@ static int write_chunk(gitno_socket *socket, const char *buffer, size_t len)
 		return -1;
 
 	return 0;
+}
+
+static int http_reconnect(git_smart_subtransport_stream *stream)
+{
+    http_stream *s = (http_stream *)stream;
+    http_subtransport *t = OWNING_SUBTRANSPORT(s);
+
+    t->connected = 0;
+    t->nc = 1;
+    if (!t->connected ||
+        !http_should_keep_alive(&t->parser) ||
+        !http_body_is_final(&t->parser)) {
+        unsigned int flags = 0;
+
+        if (t->socket.socket)
+            gitno_close(&t->socket);
+
+        if (t->use_ssl) {
+            int transport_flags;
+
+            if (t->owner->parent.read_flags(&t->owner->parent, &transport_flags) < 0)
+                return -1;
+
+            flags |= GITNO_CONNECT_SSL;
+
+            if (GIT_TRANSPORTFLAGS_NO_CHECK_CERT & transport_flags)
+                flags |= GITNO_CONNECT_SSL_NO_CHECK_CERT;
+        }
+
+        if (gitno_connect(&t->socket, t->host, t->port, flags) < 0)
+            return -1;
+
+        t->connected = 1;
+    }
+
+    s->sent_request = 0;
+    return 0;
 }
 
 static int http_redirect_to(git_smart_subtransport_stream *stream)
@@ -476,6 +553,7 @@ static int http_redirect_to(git_smart_subtransport_stream *stream)
 	}
 
     t->connected = 0;
+    t->nc = 1;
     s->sent_request = 0;
     s->received_response = 0;
     
@@ -573,7 +651,7 @@ replay:
 		ctx.buffer = buffer;
 		ctx.buf_size = buf_size;
 		ctx.bytes_read = bytes_read;
-
+        
 		/* Set the context, call the parser, then unset the context. */
 		t->parser.data = &ctx;
 
@@ -595,7 +673,9 @@ replay:
 		/* If there was a handled authentication failure, then parse_error
 		 * will have signaled us that we should replay the request. */
 		if (PARSE_ERROR_REPLAY == t->parse_error) {
-			s->sent_request = 0;
+            // Generally, I just want to flush the receive buffer of socket.
+            // The only way I found is to close it and reopen the socket.
+            http_reconnect(stream);
 			goto replay;
 		}
 
@@ -935,6 +1015,16 @@ static int http_close(git_smart_subtransport *subtransport)
 		git__free(t->port);
 		t->port = NULL;
 	}
+
+    {
+	unsigned i;
+	char *entry;
+    
+	git_vector_foreach(&t->www_authenticate, i, entry)
+		git__free(entry);
+
+	git_vector_free(&t->www_authenticate);
+    }
 
 	return 0;
 }

@@ -1630,7 +1630,7 @@ size_t http_parser_execute (http_parser *parser,
             
             case -301:
               return -301;
-
+              
             default:
               SET_ERRNO(HPE_CB_headers_complete);
               return p - data; /* Error */

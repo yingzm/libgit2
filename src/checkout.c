@@ -125,7 +125,8 @@ cleanup:
 }
 
 static int blob_content_to_link(
-	git_blob *blob, const char *path, bool can_symlink)
+	git_blob *blob, const char *path, bool can_symlink,
+    const git_checkout_opts *opts)
 {
 	git_buf linktarget = GIT_BUF_INIT;
 	int error;
@@ -134,7 +135,7 @@ static int blob_content_to_link(
 		return error;
 
 	if (can_symlink) {
-        if ((error = git_futils_mkpath2file(path, 0755))<0 ||
+        if ((error = git_futils_mkpath2file(path, opts->dir_mode))<0 ||
             (error = p_symlink(git_buf_cstr(&linktarget), path))<0)
             printf("errno=%d", errno);
 	} else
@@ -218,7 +219,7 @@ static int checkout_blob_content(
 		return error;
 	
 	if (S_ISLNK(mode))
-		error = blob_content_to_link(blob, full_path, can_symlink);
+		error = blob_content_to_link(blob, full_path, can_symlink, opts);
 	else
 		error = blob_content_to_file(blob, full_path, mode, opts);
 	

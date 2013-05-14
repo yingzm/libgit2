@@ -144,9 +144,9 @@ static int reference_matches_remote_head(
 		&oid,
 		head_info->repo,
 		reference_name) < 0) {
-			/* TODO: How to handle not found references?
-			 */
-			return -1;
+        /* If the reference doesn't exists, it obviously cannot match the expected old */
+        giterr_clear();
+        return 0;
 	}
 
 	if (git_oid_cmp(&head_info->remote_head_oid, &oid) == 0) {

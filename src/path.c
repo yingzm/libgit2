@@ -17,6 +17,9 @@
 #include <stdio.h>
 #include <ctype.h>
 
+char *decomposed_to_precomposed(const char *decomposed);
+
+
 #define LOOKS_LIKE_DRIVE_PREFIX(S) (git__isalpha((S)[0]) && (S)[1] == ':')
 
 #ifdef GIT_WIN32
@@ -702,15 +705,20 @@ int git_path_direach(
 
 	while (p_readdir_r(dir, de_buf, &de) == 0 && de != NULL) {
 		int result;
+        char *precomposed_name = NULL;
 
 		if (git_path_is_dot_or_dotdot(de->d_name))
 			continue;
 
-		if (git_buf_puts(path, de->d_name) < 0) {
+        precomposed_name = decomposed_to_precomposed(de->d_name);
+		if (precomposed_name==NULL || git_buf_puts(path, precomposed_name) < 0) {
+            if (precomposed_name)
+                free(precomposed_name);
 			closedir(dir);
 			git__free(de_buf);
 			return -1;
 		}
+        free(precomposed_name);
 
 		result = fn(arg, path);
 
@@ -761,11 +769,16 @@ int git_path_dirload(
 	while ((error = p_readdir_r(dir, de_buf, &de)) == 0 && de != NULL) {
 		char *entry_path;
 		size_t entry_len;
+        char *precomposed_name = NULL;
 
 		if (git_path_is_dot_or_dotdot(de->d_name))
 			continue;
+        
+        precomposed_name = decomposed_to_precomposed(de->d_name);
+        if (precomposed_name==NULL)
+            continue;
 
-		entry_len = strlen(de->d_name);
+		entry_len = strlen(precomposed_name);
 
 		entry_path = git__malloc(
 			path_len + need_slash + entry_len + 1 + alloc_extra);
@@ -775,8 +788,9 @@ int git_path_dirload(
 			memcpy(entry_path, path, path_len);
 		if (need_slash)
 			entry_path[path_len] = '/';
-		memcpy(&entry_path[path_len + need_slash], de->d_name, entry_len);
+		memcpy(&entry_path[path_len + need_slash], precomposed_name, entry_len);
 		entry_path[path_len + need_slash + entry_len] = '\0';
+        free(precomposed_name);
 
 		if (git_vector_insert(contents, entry_path) < 0) {
 			closedir(dir);
